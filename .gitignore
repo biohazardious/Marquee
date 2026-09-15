@@ -1,3 +1,39 @@
+# Python
 __pycache__/
-.idea
+*.egg-info/
+build/
+dist/
+.venv/
 venv/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.idea
+.vscode/
+*.swp
+.DS_Store
+
+# Agent scratch, not part of the project
+.claude/
+.wolf/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+# Local configuration: paths, the download client's credentials and the API key.
+# settings.ini.example and .env.example are the ones that belong in the repository.
+.env
+/config/
+settings.ini
+
+# Where docker-compose puts its volumes when no .env says otherwise.
+/downloads/
+/library/
+
+# MameFiles is where you drop a catlist.ini of your own; see the README in it.
+# Whatever lands there is yours, and a machine list is 90 MB.
+MameFiles/*
+!MameFiles/README.md

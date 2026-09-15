@@ -1,0 +1,149 @@
+"""gamelist.xml, the file EmulationStation reads.
+
+Without one, a Batocera box shows a folder of `mslug.zip` as "mslug". With one it
+shows *Metal Slug - Super Vehicle-001*, 1996, Nazca, 2 players, Platform, next to its
+title screen.
+
+Every field is already in hand -- MAME's own description, year and manufacturer, the
+catlist genre, the `<input>` player count -- and the images are whatever the artwork
+cache holds. Nothing is fetched and nothing is guessed.
+
+**One file, at the root of the library**, with paths that include the genre folders.
+That is how EmulationStation reads a system, and it is also the only arrangement that
+cleans up after itself: a gamelist dropped into every genre folder would keep those
+folders alive after the last game moved out of them, because the folder is no longer
+empty and nothing may prune it.
+"""
+import os
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+
+from . import art, sources
+from .reporting import Reporter
+
+NAME = "gamelist.xml"
+# Where the pictures go, relative to the library root.
+IMAGE_DIR = "images"
+
+
+def _text(parent, tag, value):
+    if value in (None, "", 0):
+        return
+    ET.SubElement(parent, tag).text = str(value)
+
+
+def _release_date(year):
+    """ES wants a full timestamp; MAME gives a year, sometimes an approximate one."""
+    digits = "".join(char for char in str(year or "") if char.isdigit())[:4]
+    if len(digits) != 4:
+        return None
+    return f"{digits}0101T000000"
+
+
+def entry(item, image=None):
+    """One <game> element for a planned machine."""
+    game = ET.Element("game")
+    _text(game, "path", f"./{item.folder}/{item.name}.zip")
+    _text(game, "name", item.description)
+    _text(game, "desc", _describe(item))
+    _text(game, "releasedate", _release_date(item.year))
+    _text(game, "developer", item.manufacturer)
+    _text(game, "publisher", item.manufacturer)
+    _text(game, "genre", _genre(item))
+    _text(game, "players", item.players)
+    if image:
+        _text(game, "image", image)
+    if item.mature:
+        _text(game, "adult", "true")
+    return game
+
+
+def _genre(item):
+    """The category as a person would read it.
+
+    catlist marks adult titles by appending a literal " * Mature * " to the section
+    name. That is syntax, not a genre, and the <adult> flag already says it.
+    """
+    label = (item.category or "").replace(sources.MATURE_MARKER, "")
+    label = label.replace("  ", " ").strip(" /").strip()
+    # A category that was nothing but the marker leaves the genre to speak for it.
+    return label or (item.genre or "")
+
+
+def _describe(item):
+    """A sentence about the machine, from what the XML already says about it."""
+    parts = []
+    if item.year and item.manufacturer:
+        parts.append(f"{item.manufacturer}, {item.year}.")
+    elif item.manufacturer:
+        parts.append(f"{item.manufacturer}.")
+    category = _genre(item)
+    if category:
+        parts.append(f"{category}.")
+    if item.players:
+        parts.append(f"{item.players} player{'s' if item.players > 1 else ''}.")
+    if item.display:
+        screen = item.display.get("type", "")
+        if item.is_vertical:
+            screen = f"vertical {screen}".strip()
+        if screen:
+            parts.append(f"{screen.capitalize()} display.")
+    if item.chd_sources:
+        parts.append("Needs a CHD.")
+    if item.is_clone:
+        parts.append(f"A version of {item.cloneof}.")
+    return " ".join(parts)
+
+
+def document(items, images=None):
+    """The whole library as one gameList."""
+    root = ET.Element("gameList")
+    for item in sorted(items, key=lambda entry: entry.description.lower()):
+        root.append(entry(item, (images or {}).get(item.name)))
+    return root
+
+
+def render(root):
+    ET.indent(root, space="  ")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            + ET.tostring(root, encoding="unicode") + "\n")
+
+
+def write(items, backend, kind=art.DEFAULT_KIND, copy_images=True, reporter=None,
+          on_progress=None):
+    """Write the library's gamelist for `items` and place their artwork.
+
+    `items` is what the destination holds -- `plan.library_items`, not `plan.items`,
+    or a partial source folder strikes every already-present game off the list.
+    `backend` is the same copy backend the transfer used, so this works to a local
+    folder, an SMB share, FTP or SFTP without knowing which.
+    """
+    reporter = reporter or Reporter()
+    items = list(getattr(items, "library_items", items))
+    images, pictures = {}, 0
+    if copy_images:
+        images, pictures = _place_images(items, backend, kind, on_progress)
+
+    body = render(document(items, images))
+    backend.write_text(NAME, body)
+
+    reporter.info(f"Wrote {NAME} for {len(items)} game(s)"
+                  + (f" and placed {pictures} picture(s)." if copy_images else "."))
+    return {"games": len(items), "images": pictures,
+            "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
+def _place_images(items, backend, kind, on_progress=None):
+    """Copy cached artwork into the library and return {machine: relative path}."""
+    images, moved = {}, 0
+    for index, item in enumerate(items, start=1):
+        source = art.path_for(item.description, kind)
+        if source and os.path.isfile(source):
+            images[item.name] = f"./{IMAGE_DIR}/{item.name}.png"
+            if backend.put_file(source, f"{IMAGE_DIR}/{item.name}.png"):
+                moved += 1
+        if on_progress and index % 50 == 0:
+            on_progress(index, len(items))
+    if on_progress:
+        on_progress(len(items), len(items))
+    return images, moved

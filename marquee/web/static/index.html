@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marquee</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🕹️</text></svg>">
+</head>
+<body>
+
+<div class="shell">
+
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="mark">🕹</div>
+      <div>
+        <b>Marquee</b>
+        <small>MAME library manager</small>
+      </div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="sidefoot" id="sidefoot"></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="btn ghost sm menu-btn" id="menuBtn">☰</button>
+      <h1 id="pageTitle">Library</h1>
+      <span class="spacer"></span>
+      <span class="muted nowrap" id="planStats"></span>
+      <button class="btn sm" id="planBtn">Build plan</button>
+      <button class="btn primary sm" id="copyBtn" disabled>Transfer</button>
+      <button class="btn danger sm hidden" id="cancelBtn">Stop</button>
+    </header>
+
+    <div class="content">
+      <div id="banners"></div>
+      <div id="destWarning" class="banner warn hidden"></div>
+      <div id="releaseNews" class="banner info hidden"></div>
+
+      <!-- ---------------- library ---------------- -->
+      <section id="page-library">
+        <div class="toolbar">
+          <span class="search"><span class="ico">⌕</span><input id="libSearch"></span>
+          <select id="libGenre"></select>
+          <select id="libHave"></select>
+          <select id="libCondition"></select>
+          <select id="libState"></select>
+          <select id="libStatus"></select>
+          <select id="libAdult"></select>
+          <select id="libArt"></select>
+          <span class="spacer"></span>
+          <span id="libGet"></span>
+          <span id="libGetArt"></span>
+          <span id="libViews"></span>
+        </div>
+        <div id="artBar"></div>
+        <div class="panel">
+          <div class="body tight" id="libraryBody"></div>
+        </div>
+      </section>
+
+      <!-- ---------------- selection ---------------- -->
+      <section id="page-selection" class="hidden">
+        <div class="panel">
+          <h2>
+            What goes in the library
+            <span class="sub" id="selectionSummary"></span>
+            <span class="spacer"></span>
+            <button class="btn sm hidden" id="selRevert">Revert</button>
+            <button class="btn primary sm" id="selSave" disabled>Saved</button>
+          </h2>
+          <div class="toolbar">
+            <span class="search"><span class="ico">⌕</span><input id="treeSearch"></span>
+            <select id="selGenre"></select>
+            <select id="selHave"></select>
+            <select id="selCondition"></select>
+            <select id="selAdult"></select>
+          </div>
+          <div class="body">
+            <p class="hint" style="margin-top:0">
+              Untick anything you do not want — a whole genre, one category, or a single
+              game. Tick it again to put it back. Counts and sizes are what that choice
+              actually costs.
+            </p>
+            <div class="tree" id="tree"></div>
+          </div>
+        </div>
+        <p class="hint">
+          What all this adds up to — which games arrive, which are replaced, which
+          files would be deleted — is on the Transfer page, before anything runs.
+        </p>
+      </section>
+
+      <!-- ---------------- wanted ---------------- -->
+      <section id="page-wanted" class="hidden">
+        <div id="wantedBody"></div>
+      </section>
+
+      <!-- ---------------- left out ---------------- -->
+      <section id="page-leftout" class="hidden">
+        <div id="leftOutBody"></div>
+      </section>
+
+      <!-- ---------------- transfer ---------------- -->
+      <section id="page-changes" class="hidden">
+        <div id="changesBody"></div>
+      </section>
+
+      <!-- ---------------- activity ---------------- -->
+      <section id="page-activity" class="hidden">
+        <div id="activityBody"></div>
+      </section>
+
+      <!-- ---------------- settings ---------------- -->
+      <section id="page-settings" class="hidden">
+        <div class="rowflex" style="margin-bottom:16px">
+          <span class="spacer" style="flex:1"></span>
+          <button class="btn sm" id="refreshReleases">Refresh releases</button>
+          <button class="btn primary sm" id="saveBtn">Save</button>
+        </div>
+        <div id="settingsBody"></div>
+      </section>
+
+      <!-- ---------------- system ---------------- -->
+      <section id="page-system" class="hidden">
+        <div id="systemBody"></div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

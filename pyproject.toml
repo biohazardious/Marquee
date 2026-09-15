@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marquee"
+version = "0.4.0"
+description = "Categorise, acquire and update a MAME romset"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Baybars HAZAR" }]
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+keywords = ["mame", "arcade", "emulation", "romset", "batocera", "emulationstation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment",
+    "Topic :: System :: Archiving",
+]
+dependencies = ["pysmb"]
+
+[project.urls]
+Homepage = "https://github.com/biohazardious/MameParser"
+Source = "https://github.com/biohazardious/MameParser"
+Issues = "https://github.com/biohazardious/MameParser/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pyftpdlib>=1.5", "paramiko>=3.0"]
+sftp = ["paramiko>=3.0"]
+
+[project.scripts]
+marquee = "marquee.cli:main"
+
+[tool.setuptools]
+packages = ["marquee", "marquee.backends", "marquee.download",
+            "marquee.indexers", "marquee.web"]
+
+[tool.setuptools.package-data]
+"marquee.web" = ["static/*", "static/js/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 110
+target-version = "py39"

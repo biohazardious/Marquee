@@ -1,0 +1,51 @@
+; Written by Marquee. Safe to edit by hand.
+[config]
+; catlist.ini and mameXXXX.xml are found automatically, and downloaded to match your
+; romset version when they are not on disk. Set catlist_ini or mame_xml to override.
+
+rom_dir = /path/to/your/roms
+chd_dir = /path/to/your/chds
+copy_path = /path/to/your/library
+
+mame_version = 
+
+allow_mature = True
+mature_rom_folder = ZZ-Adult
+
+; One game, one ROM: keep each family's parent and leave its other versions out.
+parents_only = False
+
+; What the console sees: one gamelist.xml at the library root, and the artwork
+; beside the games.
+write_gamelist = True
+copy_artwork = True
+
+blacklist_genres = ['Board Game',
+                   'Calculator',
+                   'Computer',
+                   'Digital Simulator',
+                   'Electromechanical',
+                   'Game Console',
+                   'Handheld',
+                   'Medical Equipment',
+                   'Printer',
+                   'Radio',
+                   'Slot Machine',
+                   'System',
+                   'Tablet',
+                   'Telephone',
+                   'Utilities']
+
+blacklist_categories = []
+
+blacklist_roms = []
+
+; --- acquisition -----------------------------------------------------------
+; Leave download_client empty to work only with a romset already on disk.
+;download_client = http://192.168.1.10:8080/
+;download_username = admin
+;download_password =
+;download_dir = /downloads
+; One "remote -> local" per line when the client sees a different path than we do.
+;remote_path_mappings = /downloads -> /mnt/nas/downloads
+hardlink = False

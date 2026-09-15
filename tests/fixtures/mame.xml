@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<mame build="0.252 (mame0252)" debug="no" mameconfig="10">
+ <machine name="goodgame"><description>Good Game</description><year>1987</year><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good" savestate="supported"/></machine>
+ <machine name="impgame"><description>Imperfect Game</description><year>1989</year><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="imperfect" emulation="good" savestate="unsupported"/><feature type="sound" status="imperfect"/><feature type="graphics" status="unemulated"/></machine>
+ <machine name="deadgame"><description>Dead Game</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="preliminary" emulation="preliminary"/></machine>
+ <machine name="blockedgame"><description>Blocked Game</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="biosset" isbios="yes"><description>Bios Set</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="mechgame" ismechanical="yes"><description>Mech Game</description><manufacturer>Acme</manufacturer><driver status="good" emulation="good"/></machine>
+ <machine name="devthing" isdevice="yes" runnable="no"><description>Device Thing</description></machine>
+ <machine name="protogame"><description>Proto Game (prototype)</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="betagame"><description>Beta Game (beta)</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="jpproto"><description>JP Game (Japan, prototype)</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="betamax"><description>Betamax Player (World)</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="bootlegbeta"><description>Bootleg Beta Game</description><manufacturer>bootleg (Beta Team)</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="blindgame"><description>Blind Game</description><manufacturer>Acme</manufacturer><driver status="good" emulation="good"/></machine>
+ <machine name="boardgame1"><description>Board Game One</description><manufacturer>Acme</manufacturer><display type="lcd" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="maturegame"><description>Mature Game</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="dotgame"><description>Dot Game</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="nocat"><description>Uncategorised Game</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/></machine>
+ <machine name="twodisk"><description>Two Disk</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/><disk name="bad" status="nodump"/><disk name="ok" sha1="ab"/></machine>
+ <machine name="parentchd"><description>Parent CHD</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/><disk name="pdisk" sha1="cd"/></machine>
+ <machine name="clonemerged" cloneof="parentchd" romof="parentchd"><description>Clone Merged</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/><disk name="pdisk" merge="pdisk" sha1="cd"/></machine>
+ <machine name="clonestray" cloneof="parentchd" romof="parentchd"><description>Clone Stray</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/><disk name="sdisk" sha1="99"/></machine>
+ <machine name="cloneown" cloneof="parentchd" romof="parentchd"><description>Clone Own</description><manufacturer>Acme</manufacturer><display type="raster" rotate="0"/><driver status="good" emulation="good"/><disk name="odisk" sha1="ef"/></machine>
+</mame>

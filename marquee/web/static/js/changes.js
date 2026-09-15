@@ -1,0 +1,313 @@
+/* What pressing Transfer will actually do, before it does it.
+
+   Everything here has been worked out since the first version -- the sync report is
+   what the copy runs from -- and none of it was ever on screen. A run that copies,
+   replaces, renames and deletes should be readable beforehand, not afterwards in a
+   log: which games arrive, which are replaced and why, which files are about to be
+   deleted and what they were. */
+
+import { $, append, clear, count, el, human, pressable } from './util.js';
+import { api, lock, post, state } from './api.js';
+
+const V = {
+  data: null, kind: '', query: '', offset: 0, error: '', busy: false,
+  // Deleting is never the default, and never carried over from a run.
+  remove: false,
+  // The delete has to be asked for twice: once with the box, once on the button.
+  armed: false,
+};
+
+/* Their own colours, the same ones the library's status badges use. */
+const TONE = {
+  new: 'new', update: 'update', move: 'move', keep: 'keep', orphan: 'bad',
+  fetch: 'missing',
+};
+
+export async function load(kind) {
+  if (lock.on) return;
+  if (kind !== undefined) { V.kind = kind; V.offset = 0; }
+  V.busy = true;
+  render();
+  try {
+    V.data = await api('/api/changes?' + new URLSearchParams({
+      kind: V.kind, q: V.query, offset: V.offset, limit: 200,
+    }).toString());
+    V.error = '';
+  } catch (error) {
+    V.error = error.message;
+  }
+  V.busy = false;
+  render();
+}
+
+function pick(kind) {
+  V.kind = V.kind === kind ? '' : kind;
+  V.offset = 0;
+  V.query = '';
+  load();
+}
+
+/* ---------------- the five things a run can do ---------------- */
+
+function kindRow(entry) {
+  const chosen = V.kind === entry.kind;
+  const nothing = !entry.files;
+  const choose = () => { if (!nothing) pick(entry.kind); };
+  const row = el('tr', {
+    // Fetch first is not something this run does, so it sits apart from the four
+    // that are; it is here because leaving it out is what makes "387 out of date"
+    // and "Replace: 0 files" look like a contradiction.
+    class: `${chosen ? 'on' : ''}${entry.kind === 'fetch' ? ' apart' : ''}`,
+    style: nothing ? 'cursor:default;opacity:.55' : '',
+    onclick: choose,
+  },
+    el('td', {}, el('span', { class: `badge ${TONE[entry.kind]}`, text: entry.label })),
+    el('td', { class: 'muted', text: entry.note }),
+    el('td', { class: 'num nowrap',
+      text: entry.kind === 'orphan' ? '—' : `${count(entry.machines)} games` }),
+    el('td', { class: 'num nowrap',
+      text: entry.kind === 'fetch' ? '—' : `${count(entry.files)} files` }),
+    el('td', { class: 'num nowrap', text: entry.bytes ? human(entry.bytes) : '—' }));
+  return nothing ? row : pressable(row, choose);
+}
+
+function summaryPanel(data) {
+  return el('div', { class: 'panel' },
+    el('h2', {}, 'What the next transfer will do',
+      el('span', { class: 'sub', text: `${data.to_transfer_human} to copy` })),
+    el('div', { class: 'body tight' },
+      el('table', { class: 'grid' },
+        el('tbody', {}, data.kinds.map(kindRow))),
+      el('div', { class: 'hint',
+        text: 'Pick a row to see exactly which games and files it means. Nothing here '
+          + 'has happened yet — this is the difference between what the library '
+          + 'holds and what your selection asks for.' })));
+}
+
+/* Until something has read inside the files, "replace" only knows what the sizes say,
+   and a redump that weighs the same as the dump it replaces is invisible to that. */
+function checkNote(data) {
+  if (data.checked) {
+    const found = data.states || {};
+    const bad = (found.stale || 0) + (found.damaged || 0);
+    if (!bad) {
+      return el('div', { class: 'banner good' },
+        'Every game in the library was read and matches this release.');
+    }
+    // Where they end up depends on whether there is a file here to put in their
+    // place. Saying "counted under Replace" when Replace reads zero is the page
+    // telling you something it can see is not true.
+    const replacing = (data.kinds.find((one) => one.kind === 'update') || {}).machines;
+    return el('div', { class: 'banner warn' },
+      `${count(bad)} games in the library are not what this release says they are. `
+      + (replacing
+        ? 'The ones with a downloaded file to put in their place are under Replace; '
+          + 'the rest are under Fetch first.'
+        : 'There is nothing in the download folder to put in their place, so they are '
+          + 'under Fetch first — they have to be downloaded before a transfer can fix '
+          + 'them.'));
+  }
+  const button = el('button', { class: 'btn sm', text: 'Check the library' });
+  button.onclick = async () => {
+    button.disabled = true;
+    try { await post('/api/check', {}); } catch (error) { V.error = error.message; render(); }
+  };
+  return el('div', { class: 'banner info' },
+    'Nothing has looked inside the files yet, so "Replace" only knows what the sizes '
+    + 'say — a redump that weighs the same looks identical from out here. ',
+    button);
+}
+
+/* ---------------- deleting ---------------- */
+
+function deletePanel(data) {
+  const entry = data.kinds.find((one) => one.kind === 'orphan') || { files: 0 };
+  const box = el('input', { type: 'checkbox' });
+  box.checked = V.remove;
+  box.onchange = () => { V.remove = box.checked; V.armed = false; render(); };
+  return el('label', { class: 'check' }, box,
+    el('span', {},
+      el('b', { text: `Also delete the ${count(entry.files)} files nothing wants` }),
+      el('div', { class: 'hint',
+        text: entry.files
+          ? `${human(entry.bytes)} would be removed. Only .zip and .chd files are ever `
+            + 'touched; artwork, gamelists and anything else are left alone. Leave this '
+            + 'unticked and they simply stay where they are.'
+          : 'There is nothing at the destination that the selection does not want.' })));
+}
+
+/* ---------------- the rows for one kind ---------------- */
+
+function gameRow(row) {
+  return el('tr', { style: 'cursor:default' },
+    el('td', { class: 'title-cell' },
+      el('b', { text: row.description || row.name }),
+      el('small', { text: row.name })),
+    el('td', { class: 'muted', text: row.category || row.folder }),
+    el('td', {}, row.state && row.state !== 'current'
+      ? el('span', { class: 'badge update', title: (row.state_detail || []).join(', '),
+        text: row.state })
+      : null,
+    row.chd ? el('span', { class: 'badge chd', text: 'CHD' }) : null),
+    // A move is the interesting row on an upgrade: the same file, one folder out,
+    // renamed rather than fetched again. Both ends of it, or it says nothing.
+    el('td', { class: 'muted mono small' },
+      row.from ? el('div', { text: row.from }) : null,
+      row.from ? el('div', { text: `→ ${row.paths[0]}` }) : null,
+      !row.from && row.files > 1 ? `${row.files} files` : null),
+    el('td', { class: 'num nowrap', text: row.bytes_human }));
+}
+
+/* Wanted, with nothing here to copy from. A row about a game that does not exist on
+   this machine yet: no path to show, and a reason instead of a status. */
+function fetchRow(row) {
+  return el('tr', { style: 'cursor:default' },
+    el('td', { class: 'title-cell' },
+      el('b', { text: row.description || row.name }),
+      el('small', { text: row.name })),
+    el('td', { class: 'muted', text: row.category || row.folder }),
+    el('td', {}, row.chd ? el('span', { class: 'badge chd', text: 'CHD' }) : null),
+    el('td', { class: 'muted small', text: row.why }),
+    el('td', { class: 'num nowrap', text: row.bytes_human }));
+}
+
+function fileRow(row) {
+  return el('tr', { style: 'cursor:default' },
+    el('td', { class: 'title-cell' },
+      el('b', { text: row.description || row.name }),
+      el('small', { class: 'mono', text: row.path })),
+    el('td', { class: 'muted', text: row.why }),
+    el('td', {}),
+    el('td', {}),
+    el('td', { class: 'num nowrap', text: row.bytes_human }));
+}
+
+function pager(data) {
+  const shown = data.offset + data.rows.length;
+  if (data.total <= data.rows.length && !data.offset) return null;
+  return el('div', { class: 'rowflex', style: 'padding:8px 2px' },
+    el('span', { class: 'muted',
+      text: `${count(data.offset + 1)}–${count(shown)} of ${count(data.total)}` }),
+    el('span', { style: 'flex:1' }),
+    el('button', {
+      class: 'btn sm', disabled: !data.offset,
+      text: 'Back', onclick: () => { V.offset = Math.max(0, V.offset - 200); load(); },
+    }),
+    el('button', {
+      class: 'btn sm', disabled: shown >= data.total,
+      text: 'More', onclick: () => { V.offset += 200; load(); },
+    }));
+}
+
+function rowsPanel(data) {
+  const entry = data.kinds.find((one) => one.kind === data.kind);
+  if (!entry) return null;
+  const search = el('input', {
+    type: 'text', placeholder: 'Find one…', value: V.query, id: 'changeSearch',
+  });
+  search.onchange = () => { V.query = search.value.trim(); V.offset = 0; load(); };
+
+  const draw = { orphan: fileRow, fetch: fetchRow }[data.kind] || gameRow;
+  const body = data.rows.length
+    ? el('table', { class: 'grid' }, el('tbody', {}, data.rows.map(draw)))
+    : el('div', { class: 'muted', style: 'padding:12px 2px', text: 'Nothing matches.' });
+
+  return el('div', { class: 'panel' },
+    el('h2', {}, entry.label,
+      el('span', { class: 'sub',
+        text: `${count(data.total)} ${data.kind === 'orphan' ? 'files' : 'games'} · `
+          + `${data.bytes_shown_human}` }),
+      el('span', { class: 'spacer' }),
+      el('span', { class: 'search' }, el('span', { class: 'ico', text: '⌕' }), search),
+      el('button', { class: 'btn sm', text: 'Close', onclick: () => pick(data.kind) })),
+    el('div', { class: 'body tight' }, body, pager(data),
+      data.kind === 'fetch'
+        ? el('div', { class: 'hint' },
+          'This run cannot do anything with these: there is no file here to place. ',
+          el('a', { href: '#wanted', text: 'Wanted' }),
+          ' prices them and asks the download client for them.')
+        : null));
+}
+
+/* ---------------- running it ---------------- */
+
+function goPanel(data) {
+  const busy = ['planning', 'copying', 'checking'].includes(state.data.state);
+  const go = el('button', {
+    class: 'btn primary', disabled: busy,
+    text: busy ? 'Busy…' : 'Start transfer',
+  });
+  const deleting = Boolean(V.remove && data.delete_bytes);
+  if (deleting) {
+    const orphans = data.kinds.find((one) => one.kind === 'orphan') || { files: 0 };
+    go.textContent = V.armed
+      ? `Delete ${count(orphans.files)} files and start — sure?`
+      : `Delete ${count(orphans.files)} files and start`;
+    go.classList.add('danger');
+  }
+  go.onclick = async () => {
+    if (deleting && !V.armed) {
+      // The first click arms it; the second does it. Ticking the box was already a
+      // choice, but a run that removes 11 GB should not start on one press.
+      V.armed = true;
+      render();
+      return;
+    }
+    go.disabled = true;
+    try {
+      await post('/api/copy', { delete_orphans: Boolean(V.remove) });
+      // Never carried over: the next visit starts with the box clear again.
+      V.remove = false;
+      V.armed = false;
+      location.hash = '#activity';
+    } catch (error) {
+      V.error = error.message;
+      V.armed = false;
+      render();
+    }
+  };
+  const note = data.waiting
+    ? el('span', { class: 'muted' },
+      `${count(data.waiting)} more games are selected but not downloaded yet — `,
+      el('a', { href: '#wanted', text: 'see what they cost' }))
+    : null;
+  // Everything the button is about to do, not just the copying: on an upgrade most
+  // of the work is renames, and "0 B to copy" beside 944 of them reads as "nothing
+  // will happen".
+  const moving = data.kinds.find((one) => one.kind === 'move') || { files: 0 };
+  return el('div', { class: 'rowflex', style: 'gap:12px;margin-top:4px' },
+    go,
+    el('b', { text: `${data.to_transfer_human} to copy` }),
+    moving.files
+      ? el('b', { text: `${count(moving.files)} files to move` })
+      : null,
+    V.remove && data.delete_bytes
+      ? el('b', { class: 'bad', text: `${data.delete_bytes_human} to delete` })
+      : null,
+    el('span', { style: 'flex:1' }),
+    note);
+}
+
+export function render() {
+  const host = $('changesBody');
+  if (!host) return;
+  clear(host);
+
+  if (V.error) host.append(el('div', { class: 'banner bad', text: V.error }));
+
+  const data = V.data;
+  if (!data || !data.compared) {
+    host.append(el('div', { class: 'empty' },
+      el('div', { class: 'big', text: '⇄' }),
+      el('div', {
+        text: V.busy
+          ? 'Working out the difference…'
+          : 'Build a plan first. Marquee then compares it with what the library '
+            + 'already holds, and everything the next transfer would do is listed here.',
+      })));
+    return;
+  }
+
+  append(host, summaryPanel(data), checkNote(data), rowsPanel(data),
+    deletePanel(data), goPanel(data));
+}
