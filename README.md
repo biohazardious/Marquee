@@ -517,6 +517,19 @@ It is worth knowing which way round it went: if the old folder was renamed rathe
 deleted, the files are still there under the new name, and the mount is what was
 keeping them reachable.
 
+### A disk was copied while it was still downloading
+
+A torrent client fetches the first and last pieces of a file early, so a 14 GB disk at
+0.4% already carries its CHD header and a zip its end-of-archive record. Marquee used
+to take either as proof the file was finished and copied it into the library as zeros
+of exactly the right size, which the size-based comparison would never question again.
+
+Since 0.5.1 a plan samples the body of every source file and, when a download client
+is configured, asks it which files are still arriving; those wait, marked *partial*,
+until the next plan. If a transfer ran against a half-fetched set before this, delete
+the affected disks from the library and build the plan again: they are copied afresh
+once the download has finished.
+
 ### The library is lighter than the selection says, and the Wanted page shows nothing
 
 The selection wants CHDs and none have been fetched. Before 0.5.1 the Wanted page

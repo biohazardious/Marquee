@@ -7,6 +7,7 @@ be driven from a test without a socket.
 """
 import json
 import os
+import posixpath
 import threading
 import time
 import urllib.request
@@ -1135,9 +1136,55 @@ class Application:
             offline=bool(body.get("offline")),
             fetch_support_files=bool(body.get("fetch_support_files")),
             ignore_version_mismatch=bool(body.get("ignore_version_mismatch")),
-            refresh_cache=bool(body.get("refresh_cache")))
+            refresh_cache=bool(body.get("refresh_cache")),
+            incomplete_paths=lambda: self.incomplete_sources(config))
         self.job.start_plan(config, options)
         return {"started": "plan"}
+
+    def incomplete_sources(self, config=None):
+        """Source paths the download client is still fetching, as this app sees them.
+
+        Read-only, every torrent in the client, whoever added it. The client knows
+        which pieces it has; the file on disk is the right size from the first minute
+        and carries its header early, so this is the check that cannot be fooled.
+        Empty when there is no client or it does not answer -- the plan then falls
+        back to reading the files.
+        """
+        config = config or self.current_config()
+        if not config.download_client:
+            return set()
+        try:
+            client = self.client()
+            entries = client.status()
+        except MarqueeError:
+            return set()
+        mappings = acquisition.parse_mappings(config.remote_path_mappings)
+        found = set()
+        for entry in entries:
+            infohash = entry.get("hash")
+            if not infohash or entry.get("progress", 0) >= 1:
+                continue
+            try:
+                files = client.files(infohash)
+            except MarqueeError:
+                continue
+            save_path = entry.get("save_path") or ""
+            roots = {}
+            for record in files:
+                if record.get("progress", 0) >= 1:
+                    continue
+                # A file is named from the client's save path down, and its first
+                # part is the torrent's own folder -- which is what `locate` can find
+                # by name under this app's download folder when no mapping says
+                # where the client's path lands here.
+                head, _, tail = record["path"].replace("\\", "/").partition("/")
+                if head not in roots:
+                    roots[head] = acquisition.locate(
+                        posixpath.join(save_path, head) if save_path else head,
+                        mappings, config.download_dir)
+                found.add(os.path.normpath(os.path.join(roots[head], tail) if tail
+                                           else roots[head]))
+        return found
 
     def check(self, _body=None):
         """Check the library against the release, rather than trusting the filenames.

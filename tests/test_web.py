@@ -1968,3 +1968,53 @@ class TestWhichMarqueeThisIs:
         about = get(base, "/api/state")["app"]
         assert about["update"]["newer"] is True
         assert about["update"]["url"].endswith("/releases/tag/v99.0.0")
+
+
+class TestWhatTheClientIsStillFetching:
+    """The plan asks the download client which files are still arriving and keeps
+    them out of the transfer, whatever the files on disk look like."""
+
+    class Client:
+        def __init__(self, save_path, arriving):
+            self.save_path, self.arriving = save_path, arriving
+
+        def status(self, infohashes=None):
+            return [{"hash": "cd" + "0" * 38, "progress": 0.4,
+                     "save_path": self.save_path, "category": "marquee"}]
+
+        def files(self, infohash):
+            return [{"index": index, "path": path, "progress": progress}
+                    for index, (path, progress) in enumerate(self.arriving)]
+
+    def test_arriving_files_are_mapped_into_this_apps_paths(self, server, romset):
+        base, app = server
+        chd_dir = romset["chd_dir"]
+        app.client = lambda overrides=None: self.Client(
+            "/data/torrents", [("chds/twodisk/ok.chd", 0.4), ("chds/parentchd/pdisk.chd", 1.0)])
+        post(base, "/api/save", {"download_client": "http://client:1", "download_dir": str(chd_dir.parent)})
+        found = app.incomplete_sources()
+        assert found == {str(chd_dir / "twodisk" / "ok.chd")}
+
+    def test_the_plan_leaves_them_out(self, server, romset, xml_path, catlist_path):
+        base, app = server
+        chd_dir = romset["chd_dir"]
+        app.client = lambda overrides=None: self.Client(
+            str(chd_dir.parent), [("chds/twodisk/ok.chd", 0.4)])
+        post(base, "/api/save", {"download_client": "http://client:1", "download_dir": str(chd_dir.parent)})
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        assert app.job.state == "planned", app.job.error
+        twodisk = next(item for item in app.job.plan.wanted if item.name == "twodisk")
+        assert twodisk.partial is True and "ok" in twodisk.missing_disks
+        assert any("still arriving" in event["text"] for event in app.job.snapshot(0)["events"])
+
+    def test_a_client_that_will_not_answer_is_not_fatal(self, server, romset, xml_path, catlist_path):
+        base, app = server
+
+        def broken(overrides=None):
+            raise MarqueeError("no client today")
+        app.client = broken
+        post(base, "/api/save", {"download_client": "http://client:1"})
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        assert app.job.state == "planned", app.job.error

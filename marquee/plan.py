@@ -311,6 +311,31 @@ ZIP_END_RECORD = b"PK\x05\x06"
 CHD_MAGIC = b"MComprHD"
 
 
+# How a file still arriving is told from a finished one, beyond its first and last
+# bytes. A torrent client fetches the first and last pieces early -- that is what
+# makes a video previewable -- so a 14 GB disk at 0.4% already carried its header,
+# and it was copied to the library as fourteen gigabytes of zeros. Eight small reads
+# spread over the body, plus the tail: a piece that has not arrived is zeros, and a
+# compressed stream is never zeros for four kilobytes at a stretch.
+SAMPLE_BYTES = 4096
+SAMPLES = 8
+TAIL_BYTES = 65536
+
+
+def _body_has_data(handle, size):
+    """False when a sample of the body, or the tail, is nothing but zeros."""
+    if size <= SAMPLE_BYTES * 4:
+        return True
+    positions = [size - min(TAIL_BYTES, size)]
+    positions += [int(size * (index + 0.5) / SAMPLES) for index in range(SAMPLES)]
+    for position in positions:
+        handle.seek(position)
+        chunk = handle.read(min(SAMPLE_BYTES, size - position))
+        if chunk and not chunk.strip(b"\x00"):
+            return False
+    return True
+
+
 def looks_complete(path):
     """Whether a file in the source folder is a finished file, not a placeholder.
 
@@ -318,30 +343,48 @@ def looks_complete(path):
     client's pre-allocated file, or one still arriving, ends in zeros. The record is
     in the last 22 bytes of a plain zip and a little further in from a TorrentZip'd
     one (which carries a comment), so the last 128 bytes are enough. A CHD is
-    recognised by its header; a placeholder has none. One small read per file:
-    fourteen thousand of them take well under a second.
+    recognised by its header; a placeholder has none. Either way the body is sampled
+    too (see `_body_has_data`): the ends of a file arrive first. A few small reads
+    per file: fourteen thousand of them take a couple of seconds.
+
+    Strict on purpose. A finished file wrongly called partial waits, visibly, for the
+    next plan; a partial file wrongly called finished is copied into the library as
+    zeros of the right size, which nothing downstream can tell from the real thing.
     """
     lower = path.lower()
     try:
         with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
             if lower.endswith(".zip"):
-                handle.seek(0, os.SEEK_END)
-                size = handle.tell()
                 handle.seek(max(0, size - 128))
-                return ZIP_END_RECORD in handle.read()
+                if ZIP_END_RECORD not in handle.read():
+                    return False
+                return _body_has_data(handle, size)
             if lower.endswith(".chd"):
-                return handle.read(len(CHD_MAGIC)) == CHD_MAGIC
+                handle.seek(0)
+                if handle.read(len(CHD_MAGIC)) != CHD_MAGIC:
+                    return False
+                return _body_has_data(handle, size)
     except OSError:
         return False
     return True
 
 
-def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature):
+def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature, incomplete=frozenset()):
     """Decide what would be copied. `folder_for` maps a category to (folder, is_mature).
 
     Machines excluded by genre are still measured, so the genre breakdown reflects the
     whole romset rather than only the part currently selected.
+
+    `incomplete` is the set of source paths the download client says are still
+    arriving. It outranks what the file looks like: the client knows which pieces it
+    has, and the file on disk is the right size from the first minute.
     """
+    incomplete = {os.path.normpath(path) for path in incomplete}
+
+    def finished(path):
+        return os.path.normpath(path) not in incomplete and looks_complete(path)
     plan = CopyPlan()
     seen_missing_chds = set()
     genres = {}
@@ -379,7 +422,7 @@ def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature):
             # file at its full size before a byte arrives, so a folder can hold
             # thousands of zips that are nothing but zeros -- 5,442 of 14,279 on the
             # set this was found on -- and a size check calls every one downloaded.
-            if looks_complete(rom_path):
+            if finished(rom_path):
                 item.rom_bytes = size
                 item.rom_source = rom_path
             else:
@@ -390,13 +433,13 @@ def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature):
             item.disks = list(info.get("chd_disks") or [])
             found, missing = resolve_disks(name, info.get("parent"),
                                            item.disks, chd_dir)
-            finished = [path for path in found if looks_complete(path)]
-            if len(finished) < len(found):
+            done = [path for path in found if finished(path)]
+            if len(done) < len(found):
                 item.partial = True
                 missing = missing + [os.path.splitext(os.path.basename(path))[0]
-                                     for path in found if path not in finished]
-            item.chd_sources = finished
-            item.chd_sizes = [_file_size(path) for path in finished]
+                                     for path in found if path not in done]
+            item.chd_sources = done
+            item.chd_sizes = [_file_size(path) for path in done]
             item.chd_bytes = sum(item.chd_sizes)
             item.missing_disks = missing
 

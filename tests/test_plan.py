@@ -476,3 +476,55 @@ class TestAPlaceholderIsNotAFile:
         assert describe(built, config)["partial_roms"] == 1
         row = next(row for row in machine_rows(built)["rows"] if row["name"] == "goodgame")
         assert row["partial"] is True
+
+
+class TestAFileStillArriving:
+    """A torrent client fetches the first and last pieces early. A 14 GB disk at 0.4%
+    carried its header, passed for finished, and was copied into the library as
+    fourteen gigabytes of zeros of exactly the right size -- which no size
+    comparison would ever question again."""
+
+    def test_a_chd_with_its_header_and_nothing_else_is_partial(self, tmp_path):
+        path = tmp_path / "big.chd"
+        path.write_bytes(b"MComprHD" + b"\x00" * 200000)
+        assert CopyPlan.looks_complete(str(path)) is False
+
+    def test_a_chd_with_a_stretch_of_zeros_is_partial(self, tmp_path):
+        """Eight samples cannot catch one small missing piece -- the client's own
+        word does that -- but a file that is mostly holes does not get past them."""
+        path = tmp_path / "half.chd"
+        body = bytearray(b"c" * 200000)
+        body[60000:160000] = b"\x00" * 100000             # half of it not yet arrived
+        path.write_bytes(b"MComprHD" + bytes(body))
+        assert CopyPlan.looks_complete(str(path)) is False
+
+    def test_a_chd_full_of_data_is_finished(self, tmp_path):
+        path = tmp_path / "done.chd"
+        path.write_bytes(b"MComprHD" + b"c" * 200000)
+        assert CopyPlan.looks_complete(str(path)) is True
+
+    def test_a_zip_whose_ends_arrived_first_is_partial(self, tmp_path):
+        path = tmp_path / "big.zip"
+        path.write_bytes(b"PK\x03\x04" + b"\x00" * 200000 + b"PK\x05\x06" + b"\x00" * 18)
+        assert CopyPlan.looks_complete(str(path)) is False
+
+    def test_a_small_zip_is_judged_by_its_record_alone(self, tmp_path):
+        from tests.conftest import ROM_BYTES
+        path = tmp_path / "small.zip"
+        path.write_bytes(ROM_BYTES)
+        assert CopyPlan.looks_complete(str(path)) is True
+
+    def test_what_the_client_says_is_arriving_outranks_the_file(self, categorised, config,
+                                                                 romset):
+        """The client knows which pieces it has; the file cannot be trusted at 95%."""
+        disk = romset["chd_dir"] / "twodisk" / "ok.chd"
+        assert CopyPlan.looks_complete(str(disk))
+        built = CopyPlan.build(categorised, config.rom_dir, config.chd_dir,
+                               catalog.folder_namer(config), config.allow_mature,
+                               incomplete={str(disk), str(romset["rom_dir"] / "goodgame.zip")})
+        twodisk = next(item for item in built.items if item.name == "twodisk")
+        assert twodisk.partial is True and twodisk.chd_sources == []
+        assert "ok" in twodisk.missing_disks
+        good = next(item for item in built.wanted if item.name == "goodgame")
+        assert good.partial is True and good.rom_source is None
+        assert "goodgame" in built.partial_roms
