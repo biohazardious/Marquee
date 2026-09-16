@@ -44,7 +44,12 @@ export async function api(path, options = {}) {
     throw new Unauthorised(payload.error || 'This server needs an API key.');
   }
   lock.on = false;
-  if (!response.ok || payload.error) throw new Error(payload.error || `HTTP ${response.status}`);
+  // Only the status decides. A 200 whose body carries an `error` field is data --
+  // the job snapshot says what the last run stopped on, the queue says why the
+  // client could not be reached -- and treating it as a failed request meant that
+  // once a job hit an error, every poll threw and the page froze on the state
+  // before it, never showing the error at all.
+  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
   return payload;
 }
 
@@ -114,6 +119,42 @@ export function startPolling(onUnauthorised) {
     }
     const busy = ['planning', 'copying', 'checking'].includes(state.data.state);
     setTimeout(tick, busy ? 700 : 4000);
+  };
+  tick();
+  startQueuePolling();
+}
+
+/* The download client's queue, read on its own clock: it is what the status bar
+   on every page shows, so it is fetched once for the page rather than by whichever
+   view happens to be open. Quicker while something is coming down. */
+const queueListeners = new Set();
+
+export function subscribeQueue(fn) {
+  queueListeners.add(fn);
+  if (state.queue) fn(state.queue);
+  return () => queueListeners.delete(fn);
+}
+
+export async function refreshQueue() {
+  try {
+    state.queue = await api('/api/queue');
+  } catch (error) {
+    if (error instanceof Unauthorised) throw error;
+    state.queue = { configured: true, error: error.message, torrents: [], unreachable: true };
+  }
+  for (const fn of queueListeners) fn(state.queue);
+  return state.queue;
+}
+
+let queueStarted = false;
+
+export function startQueuePolling() {
+  if (queueStarted) return;
+  queueStarted = true;
+  const tick = async () => {
+    try { await refreshQueue(); } catch { /* the key dialog is already up */ }
+    const active = state.queue && state.queue.downloading;
+    setTimeout(tick, active ? 3000 : 8000);
   };
   tick();
 }

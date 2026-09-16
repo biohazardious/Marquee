@@ -53,6 +53,9 @@ class Application:
         self._settings_lock = threading.Lock()
         self._config_cache = {"stamp": None, "config": None}
         self._torrent_sizes = {"at": 0.0, "data": {}}
+        # The status bar on every page asks for the queue; one answer serves all of
+        # them for a few seconds rather than one qBittorrent call per tab per tick.
+        self._queue_cache = {"at": 0.0, "data": None}
         self._read_catalogue()
 
     def current_config(self):
@@ -731,19 +734,35 @@ class Application:
         config = self.current_config()
         if not config.download_client:
             return {"configured": False, "torrents": []}
+        cached = self._queue_cache
+        if cached["data"] is not None and time.time() - cached["at"] < 3:
+            return cached["data"]
         try:
             entries = self.client().status()
         except MarqueeError as error:
-            return {"configured": True, "error": str(error), "torrents": []}
-        mine = [entry for entry in entries
-                if entry["category"] == acquisition.CATEGORY]
-        return {
-            "configured": True,
-            "torrents": mine,
-            "downloading": sum(1 for e in mine if e["phase"] == "downloading"),
-            "bytes_left": sum(max(e["size"] - e["downloaded"], 0) for e in mine),
-            "speed": sum(e["speed"] for e in mine),
-        }
+            payload = {"configured": True, "error": str(error), "torrents": []}
+        else:
+            mine = [entry for entry in entries
+                    if entry["category"] == acquisition.CATEGORY]
+            left = sum(max(e["size"] - e["downloaded"], 0) for e in mine)
+            speed = sum(e["speed"] for e in mine)
+            payload = {
+                "configured": True,
+                "torrents": mine,
+                "downloading": sum(1 for e in mine if e["phase"] == "downloading"),
+                "seeding": sum(1 for e in mine if e["phase"] == "complete"),
+                "bytes_left": left,
+                "bytes_left_human": human_bytes(left),
+                "speed": speed,
+                "speed_human": human_bytes(speed) + "/s",
+                # Whole seconds until the slowest of them is done, or None.
+                "eta": max([e["eta"] for e in mine
+                            if e["phase"] == "downloading" and 0 < e["eta"] < 8640000]
+                           or [None]),
+                "client": config.download_client,
+            }
+        self._queue_cache = {"at": time.time(), "data": payload}
+        return payload
 
     # -- artwork ------------------------------------------------------------ #
 

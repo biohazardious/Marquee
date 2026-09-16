@@ -1239,15 +1239,30 @@ class TestCheckingTheLibrary:
         assert app.job.state == "planned", app.job.error
         return base, app
 
-    def test_it_reports_what_it_found(self, planned, romset):
+    def test_it_reports_what_it_found(self, planned, romset, xml_path, catlist_path):
         base, app = planned
+        # Nothing has been transferred: there is nothing in the library to look at,
+        # and saying so beats reporting every game in the source folder as "absent"
+        # -- which is what used to happen, and then hid behind every check filter.
+        post(base, "/api/check", {})
+        wait_for(app.job, "planned", "error")
+        assert app.job.state == "planned", app.job.error
+        assert not app.job.checked
+        assert any("nothing to check" in event["text"].lower()
+                   for event in app.job.snapshot(0)["events"])
+
+        post(base, "/api/copy", {})
+        wait_for(app.job, "done", "error")
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
         post(base, "/api/check", {})
         wait_for(app.job, "planned", "error")
         assert app.job.state == "planned", app.job.error
         # The fixture set has no <rom> entries, so nothing can be called wrong -- but
-        # every machine is looked at and answered for.
+        # every machine in the library is looked at and answered for.
         assert app.job.checked
         assert sum(app.job.checked.values()) > 0
+        assert "absent" not in app.job.checked
         assert get(base, "/api/state")["plan"]["states"]
 
     def test_a_stale_file_becomes_something_to_fetch(self, planned, romset):

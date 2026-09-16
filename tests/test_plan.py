@@ -440,3 +440,39 @@ class TestWhatTheLibraryHolds:
         assert item not in plan.items
         names = [game.findtext("path") for game in gamelist.document(plan.library_items)]
         assert any(item.name in (path or "") for path in names)
+
+
+class TestAPlaceholderIsNotAFile:
+    """qBittorrent allocates every selected file at full size before a byte arrives.
+    5,442 of 14,279 zips in a live torrent folder were zeros, and every one of them
+    used to count as downloaded."""
+
+    def test_a_zero_filled_zip_is_not_downloaded(self, categorised, config, romset):
+        (romset["rom_dir"] / "goodgame.zip").write_bytes(b"\x00" * 300)
+        built = build_from(categorised, config)
+        by_name = {item.name: item for item in built.wanted}
+        assert by_name["goodgame"].rom_source is None
+        assert by_name["goodgame"].partial is True
+        assert "goodgame" in built.partial_roms
+        assert "goodgame" in built.missing_roms
+        assert "goodgame" not in {item.name for item in built.items}
+
+    def test_a_zero_filled_chd_is_a_missing_disk(self, categorised, config, romset):
+        (romset["chd_dir"] / "twodisk" / "ok.chd").write_bytes(b"\x00" * 600)
+        built = build_from(categorised, config)
+        item = next(entry for entry in built.wanted if entry.name == "twodisk")
+        assert "ok" in item.missing_disks
+        assert item.partial is True
+        assert not any(path.endswith("ok.chd") for path in item.chd_sources)
+
+    def test_a_finished_zip_still_counts(self, categorised, config, romset):
+        built = build_from(categorised, config)
+        assert "goodgame" in {item.name for item in built.items}
+        assert built.partial_roms == []
+
+    def test_the_page_is_told(self, categorised, config, romset):
+        (romset["rom_dir"] / "goodgame.zip").write_bytes(b"\x00" * 300)
+        built = build_from(categorised, config)
+        assert describe(built, config)["partial_roms"] == 1
+        row = next(row for row in machine_rows(built)["rows"] if row["name"] == "goodgame")
+        assert row["partial"] is True

@@ -13,7 +13,12 @@
 
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="mark">🕹</div>
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="30" height="30">
+          <rect x="4" y="6" width="24" height="20" rx="3" fill="#241a05"/>
+          <path d="M8 26V10h3v9h2v-9h3v16zM19 12h6v3h-6zM19 17h6v3h-6z" fill="#f5a524"/>
+        </svg>
+      </div>
       <div>
         <b>Marquee</b>
         <small>MAME library manager</small>
@@ -24,25 +29,38 @@
   </aside>
 
   <div class="main">
+    <div class="top">
     <header class="topbar">
-      <button class="btn ghost sm menu-btn" id="menuBtn">☰</button>
-      <h1 id="pageTitle">Library</h1>
+      <button class="btn ghost sm menu-btn" id="menuBtn" aria-label="Menu"></button>
+      <h1 id="pageTitle">Overview</h1>
       <span class="spacer"></span>
-      <span class="muted nowrap" id="planStats"></span>
+      <span class="planpill" id="planStats"></span>
       <button class="btn sm" id="planBtn">Build plan</button>
       <button class="btn primary sm" id="copyBtn" disabled>Transfer</button>
       <button class="btn danger sm hidden" id="cancelBtn">Stop</button>
     </header>
+    <!-- What is happening right now, on every page: the job on the left, the
+         download client on the right. -->
+    <div class="statusbar" id="statusbar">
+      <div class="status-job" id="statusJob"></div>
+      <div class="status-client" id="statusClient"></div>
+    </div>
+    </div>
 
     <div class="content">
       <div id="banners"></div>
       <div id="destWarning" class="banner warn hidden"></div>
       <div id="releaseNews" class="banner info hidden"></div>
 
+      <!-- ---------------- overview ---------------- -->
+      <section id="page-overview" class="hidden">
+        <div id="overviewBody"></div>
+      </section>
+
       <!-- ---------------- library ---------------- -->
       <section id="page-library">
         <div class="toolbar">
-          <span class="search"><span class="ico">⌕</span><input id="libSearch"></span>
+          <span class="search"><input id="libSearch"></span>
           <select id="libGenre"></select>
           <select id="libHave"></select>
           <select id="libCondition"></select>
@@ -72,7 +90,7 @@
             <button class="btn primary sm" id="selSave" disabled>Saved</button>
           </h2>
           <div class="toolbar">
-            <span class="search"><span class="ico">⌕</span><input id="treeSearch"></span>
+            <span class="search"><input id="treeSearch"></span>
             <select id="selGenre"></select>
             <select id="selHave"></select>
             <select id="selCondition"></select>
@@ -115,12 +133,13 @@
 
       <!-- ---------------- settings ---------------- -->
       <section id="page-settings" class="hidden">
-        <div class="rowflex" style="margin-bottom:16px">
+        <div class="rowflex settings-actions">
+          <span class="muted">Saved to <span class="mono" id="settingsPath"></span></span>
           <span class="spacer" style="flex:1"></span>
           <button class="btn sm" id="refreshReleases">Refresh releases</button>
           <button class="btn primary sm" id="saveBtn">Save</button>
         </div>
-        <div id="settingsBody"></div>
+        <div id="settingsBody" class="settings-grid"></div>
       </section>
 
       <!-- ---------------- system ---------------- -->

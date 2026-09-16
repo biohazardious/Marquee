@@ -125,7 +125,10 @@ export function badges(machine) {
                           text: 'IMPERFECT' }));
   }
   if (machine.mature) out.push(el('span', { class: 'badge adult', text: '18+' }));
-  if (machine.status) out.push(el('span', { class: `badge ${machine.status}`, text: machine.status }));
+  // In the source folder but not finished -- a placeholder the torrent client has
+  // allocated, or a download on its way. Not "missing": it is coming.
+  if (machine.partial) out.push(el('span', { class: 'badge move', text: 'downloading' }));
+  else if (machine.status) out.push(el('span', { class: `badge ${machine.status}`, text: machine.status }));
   return out;
 }
 

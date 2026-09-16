@@ -66,20 +66,31 @@ needed for SFTP and is an optional extra.
 
 ## The pages
 
-A dark web UI with eight pages:
+A dark web UI with nine pages, in the order the work happens:
 
+- **Overview** — where the library stands and what to do next. The four stages
+  (source folder → selection → fetch → library) as cards with the number that matters
+  on each, one recommendation at the top worked out from the same figures ("2.9 GB
+  ready to go into the library", "your settings moved on — rebuild the plan"), the
+  health of the setup, the free space the next transfer needs, and the last runs.
+  It is the page the app opens on. The topbar pill says the same thing from every
+  other page, and the status bar under it says what is happening *right now* --
+  "Transferring 1.1 GB of 2.9 GB · 118 MB/s · 15s left · mslug.zip", "Checking the
+  library 4,210 of 10,223", "Stopped: no space left on device" -- with the download
+  client beside it: unreachable and why, connected, or "Downloading 1 release · 11.9
+  MB/s · 38 GB left · 55m left".
 - **Library** — every machine the selection covers, downloaded or not, as a poster
   grid or a dense table. On a fresh install that is the whole catalogue: nothing is on
   disk, and the point of the page is choosing what should be.
   Title screens come from libretro-thumbnails, matched by MAME's own description, so
-  there is no scraper and no lookup table; **⬇ Artwork** downloads them all so the
+  there is no scraper and no lookup table; **Artwork** downloads them all so the
   page loads from disk and works offline, and the grid redraws itself when it
   finishes. Filter by genre, by sync state, or by whether a title is adult. Click a
   game for year, manufacturer, players, controls, screen type and resolution, where it
   will be filed, its files and its other revisions. Each game has its own link
   (`#library/mslug`). Filter by condition, too: everything listed passes MAME's
   working filter, but 3,229 of the 11,993 run with something imperfect about them and
-  each one says what. **⬇ Download** asks the client for exactly what the filters are
+  each one says what. **Download** asks the client for exactly what the filters are
   showing — it prices it first, and nothing is fetched until you say so.
 - **Selection** — one tree shaped like the library on disk: genre → category → game,
   and then a branch named after your adult folder holding the same genres and
@@ -256,6 +267,15 @@ about what you have, not only a place to put things.
   filesystem, so the library costs no extra space and seeding carries on
 - Rewrite the download client's view of a path into yours, for when it runs in another
   container or on another host
+
+### A file that is there is not a file that is finished
+
+qBittorrent allocates every selected file at its full size before a byte of it
+arrives, so a torrent folder half-way through a download holds thousands of zips that
+are the right size and nothing but zeros. Marquee reads the last 128 bytes of every
+zip (the end-of-archive record has to be there) and the first 8 of every CHD (its
+header) before calling a file downloaded -- a fraction of a second for 14,000 files.
+Anything that fails is "downloading", not "on disk", and is never copied.
 
 ## What it does not do
 

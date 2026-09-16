@@ -6,6 +6,7 @@
    log: which games arrive, which are replaced and why, which files are about to be
    deleted and what they were. */
 
+import { icon } from './icons.js';
 import { $, append, clear, count, el, human, pressable } from './util.js';
 import { api, lock, post, state } from './api.js';
 
@@ -218,7 +219,7 @@ function rowsPanel(data) {
         text: `${count(data.total)} ${data.kind === 'orphan' ? 'files' : 'games'} · `
           + `${data.bytes_shown_human}` }),
       el('span', { class: 'spacer' }),
-      el('span', { class: 'search' }, el('span', { class: 'ico', text: '⌕' }), search),
+      el('span', { class: 'search' }, icon('search'), search),
       el('button', { class: 'btn sm', text: 'Close', onclick: () => pick(data.kind) })),
     el('div', { class: 'body tight' }, body, pager(data),
       data.kind === 'fetch'

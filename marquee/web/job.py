@@ -162,10 +162,22 @@ class Job:
 
         def work():
             reporter = QueueReporter(self)
-            here = [item for item in plan.wanted
-                    if item.in_library or item.rom_source]
+            # What the library holds, not what the torrent folder holds. Before the
+            # first transfer the two are disjoint, and checking the 1,144 games that
+            # were only in the source folder reported every one of them "absent" --
+            # a result that then hid behind every check-result filter.
+            if plan.sync is not None:
+                at_destination = set()
+                for kind in (sync.KEEP, sync.UPDATE, sync.MOVE):
+                    at_destination.update(plan.sync.machines(kind))
+                here = [item for item in plan.wanted
+                        if item.in_library or item.name in at_destination]
+            else:
+                here = [item for item in plan.wanted
+                        if item.in_library or item.rom_source]
             if not here:
-                reporter.warn("Nothing in the library to check yet.")
+                reporter.warn("Nothing is in the library yet, so there is nothing to "
+                              "check. Transfer first.")
                 return
             reporter.stage("Reading the release's ROM lists...")
             manifests = sources.rom_manifests(
@@ -825,6 +837,7 @@ def machine_row(item, state="", size=None):
         "genre": item.genre,
         "folder": item.folder,
         "excluded": bool(getattr(item, "excluded", False)),
+        "partial": bool(getattr(item, "partial", False)),
         "bytes": size if size is not None else item.total_bytes,
         "bytes_human": human_bytes(size if size is not None else item.total_bytes),
         "chd": bool(item.chd_sources or item.disks),
@@ -1010,6 +1023,9 @@ def describe(plan, config, cache=None, sizes=None):
                    if (plan.checked or {}).get(state)},
         "missing_chds": len(plan.missing_chds),
         "missing_examples": plan.needed[:12],
+        # In the source folder but not finished: a placeholder the torrent client
+        # allocated, or a download still on its way. Not downloaded, and said so.
+        "partial_roms": len(plan.partial_roms),
         # Wanted, not in the source folder, but already sitting at the destination.
         "in_library": sum(1 for item in plan.wanted if item.in_library),
         "mature_filtered": len(plan.mature_filtered),
@@ -1079,6 +1095,14 @@ def _weigh_the_wanted(plan, payload, sizes):
         entry["wanted_bytes_human"] = human_bytes(entry["wanted_bytes"])
     payload["wanted_bytes"] = sum(by_genre.values())
     payload["wanted_bytes_human"] = human_bytes(payload["wanted_bytes"])
+    # And what the part that is not here yet weighs, which is the figure the front
+    # page answers "what would fetching cost" with.
+    needed = set(plan.needed)
+    priced = sizes or {}
+    missing = sum((item.total_bytes or priced.get(item.name, 0))
+                  for item in plan.wanted if item.name in needed)
+    payload["missing_bytes"] = missing
+    payload["missing_bytes_human"] = human_bytes(missing) if missing else ""
 
 
 def _folder_totals(plan):

@@ -435,7 +435,8 @@ class TestAStaleFileOfTheSameSize:
         plan.sync = None
         summary = pipeline.execute(plan, config)
         assert summary.updated == 1
-        assert target.read_bytes() == b"rom" * 100, "the backend's same-size skip won"
+        from conftest import ROM_BYTES
+        assert target.read_bytes() == ROM_BYTES, "the backend's same-size skip won"
 
 
 class TestDecliningTheComparison:

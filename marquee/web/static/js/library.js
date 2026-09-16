@@ -1,6 +1,7 @@
 /* The library: every machine the current plan covers, as posters or as a table,
    with a detail panel behind each one. */
 
+import { icon } from './icons.js';
 import { $, append, badges, banner, clear, count, debounce, el, hero, human, pressable, shot, subtitle } from './util.js';
 import { api, lock, machine as fetchMachine, machines as fetchMachines, post, state } from './api.js';
 
@@ -148,17 +149,26 @@ export function render() {
   clear(host);
 
   if (!V.rows.length) {
-    // "Out of date: nothing matches" reads as a broken filter when the truth is that
-    // nothing has read inside the files yet. The answer to that is a button.
-    const checked = Object.keys((state.data.plan || {}).states || {}).length;
+    const plan = state.data.plan || {};
+    // Three different reasons for an empty page, and each needs its own sentence:
+    // nothing has been checked, the genre is on the exclude list, or the filters
+    // simply meet nowhere -- in which case they are named, each droppable alone.
+    const checked = Object.keys(plan.states || {}).length;
     const unchecked = V.state && !checked;
+    const outGenre = V.genre && (plan.genres || []).find(
+      (genre) => genre.name === V.genre && genre.excluded);
+    const active = chips();
     const empty = el('div', { class: 'empty' },
       el('div', { class: 'big', text: unchecked ? '🔍' : '🕹' }),
       el('div', { text: unchecked
         ? 'Nothing has looked inside the files yet, so no game has a check result.'
-        : filtering()
-          ? 'Nothing matches those filters.'
-          : 'No plan yet — set your folders and build one.' }));
+        : outGenre
+          ? `${V.genre} is left out of the library, so none of its games are here.`
+          : active.length > 1
+            ? 'No game matches all of these at once.'
+            : active.length
+              ? 'Nothing matches that.'
+              : 'No plan yet — set your folders and build one.' }));
     if (unchecked) {
       const button = el('button', { class: 'btn primary sm', text: 'Check the library',
         style: 'margin-top:12px' });
@@ -168,12 +178,16 @@ export function render() {
         try { await post('/api/check', {}); } catch (error) { button.textContent = error.message; }
       };
       empty.append(button);
-    } else if (filtering()) {
-      // A way out. Seven controls could combine into nothing -- "Move" plus "Not
-      // downloaded" always does -- and the only button that reset them was on the
-      // summary bar, which is not drawn when there is nothing to summarise.
-      empty.append(el('button', { class: 'btn sm ghost', text: 'Clear filters',
-        style: 'margin-top:12px', onclick: clearFilters }));
+    } else if (outGenre) {
+      empty.append(el('div', { class: 'rowflex', style: 'justify-content:center;margin-top:12px' },
+        el('a', { class: 'btn sm primary', href: '#selection', text: 'Put it back on the Selection page' }),
+        active[0]));
+    } else if (active.length) {
+      empty.append(el('div', { class: 'rowflex', style: 'justify-content:center;margin-top:12px' },
+        active,
+        active.length > 1
+          ? el('button', { class: 'btn sm ghost', text: 'Clear all', onclick: clearFilters })
+          : null));
     }
     host.append(empty);
     return;
@@ -298,8 +312,10 @@ export function toolbar() {
     el('option', { value: '', text: 'Any action' }),
     // The same words the Transfer page uses. Two pages describing one run in two
     // vocabularies -- `keep` here, "Leave alone" there -- is a puzzle nobody asked for.
+    // "Not downloaded" is the Have filter's job; offering it twice under two names
+    // made the two look like they disagreed.
     [['new', 'Copy over'], ['update', 'Replace'], ['move', 'Move'],
-      ['keep', 'Leave alone'], ['missing', 'Not downloaded']].map(([kind, label]) =>
+      ['keep', 'Leave alone']].map(([kind, label]) =>
       el('option', { value: kind, text: label, selected: V.status === kind })));
 
   const have = el('select', {
@@ -331,6 +347,7 @@ export function toolbar() {
     ['incomplete', 'Missing an inherited ROM'],
     ['current', 'Verified current'],
     ['damaged', 'Damaged'],
+    ['absent', 'File missing'],
   ].map(([value, label]) => el('option', { value, text: label,
                                           selected: V.state === value })));
 
@@ -355,7 +372,7 @@ export function toolbar() {
   ].map(([value, label]) => el('option', { value, text: label, selected: V.art === value })));
 
   const getArt = el('button', {
-    class: 'btn sm', text: '⬇ Artwork',
+    class: 'btn sm', text: 'Artwork',
     title: 'Download every picture so the library loads them from here, not from the internet',
     onclick: async (event) => {
       event.target.disabled = true;
@@ -365,19 +382,25 @@ export function toolbar() {
 
   const views = el('div', { class: 'seg' },
     el('button', {
-      class: V.view === 'posters' ? 'on' : '', text: '▦ Posters',
+      class: V.view === 'posters' ? 'on' : '', text: 'Posters',
       onclick: () => setView('posters'),
     }),
     el('button', {
-      class: V.view === 'table' ? 'on' : '', text: '☰ Table',
+      class: V.view === 'table' ? 'on' : '', text: 'Table',
       onclick: () => setView('table'),
     }));
 
   const get = el('button', {
-    class: 'btn primary sm', text: '⬇ Download',
+    class: 'btn primary sm', text: 'Download',
     title: 'Ask the download client for exactly the games these filters are showing',
     onclick: () => downloadDrawer(),
   });
+
+  // Drawn icons, the same set the navigation uses.
+  getArt.prepend(icon('download'));
+  get.prepend(icon('download'));
+  views.children[0].prepend(icon('overview'));
+  views.children[1].prepend(icon('menu'));
 
   return { search, genres, statuses, adult, have, condition, state: checkResult,
     art, getArt, get,
@@ -395,18 +418,68 @@ export function fillGenres(select, plan) {
   if (!select || !plan) return;
   // The count is what the selection asks for, not what happens to be downloaded:
   // on a set nothing has arrived for yet, every genre would otherwise read (0).
-  const labels = (plan.genres || []).map(
-    (genre) => `${genre.name} (${count(genre.wanted ?? genre.machines)})`);
+  // A genre on the exclude list has nothing in the library, so it sits at the bottom
+  // under its own heading rather than reading "Board Game (1)" among the others and
+  // then answering with an empty page.
+  const kept = (plan.genres || []).filter((genre) => !genre.excluded);
+  const out = (plan.genres || []).filter((genre) => genre.excluded);
+  const label = (genre) => `${genre.name} (${count(genre.wanted ?? genre.machines)})`;
+  const signature = [...kept.map(label), '--', ...out.map(label)].join('|');
   // Rebuilt only when it would actually differ; the page polls every few seconds and
   // replacing the options under an open menu closes it in the reader's face.
-  if (select.dataset.signature === labels.join('|')) return;
-  select.dataset.signature = labels.join('|');
+  if (select.dataset.signature === signature) return;
+  select.dataset.signature = signature;
   const current = V.genre;
   clear(select);
   select.append(el('option', { value: '', text: 'All genres' }));
-  (plan.genres || []).forEach((genre, index) => select.append(el('option', {
-    value: genre.name, selected: genre.name === current, text: labels[index],
-  })));
+  kept.forEach((genre) => select.append(el('option', {
+    value: genre.name, selected: genre.name === current, text: label(genre) })));
+  if (out.length) {
+    select.append(el('optgroup', { label: 'Left out of the library' },
+      out.map((genre) => el('option', {
+        value: genre.name, selected: genre.name === current, text: label(genre) }))));
+  }
+}
+
+const FILTER_LABELS = {
+  query: 'search', genre: 'genre', have: 'downloaded', condition: 'condition',
+  state: 'check result', status: 'action', mature: 'adult',
+};
+const CONTROL_FOR = {
+  query: 'libSearch', genre: 'libGenre', have: 'libHave', condition: 'libCondition',
+  state: 'libState', status: 'libStatus', mature: 'libAdult',
+};
+const WORDS = {
+  have: { yes: 'on disk', no: 'not downloaded' },
+  condition: { good: 'fully emulated', flawed: 'imperfect' },
+  mature: { hide: 'adult hidden', only: 'adult only' },
+  status: { new: 'copy over', update: 'replace', move: 'move', keep: 'leave alone' },
+  state: { stale: 'out of date', incomplete: 'missing an inherited ROM',
+    current: 'verified current', damaged: 'damaged', absent: 'file missing' },
+};
+
+function describeFilter(key, value) {
+  if (key === 'query') return `“${value}”`;
+  return (WORDS[key] || {})[value] || value;
+}
+
+/* Every active filter as a chip that can be dropped on its own: with seven controls,
+   "nothing matches" without saying which one emptied the page is a dead end. */
+function chips() {
+  return Object.entries(CONTROL_FOR)
+    .filter(([key]) => V[key])
+    .map(([key]) => {
+      const drop = el('button', { class: 'btn sm', title: `Drop the ${FILTER_LABELS[key]} filter` },
+        `${FILTER_LABELS[key]}: ${describeFilter(key, V[key])} ✕`);
+      drop.onclick = () => {
+        V[key] = '';
+        V.offset = 0;
+        const control = $(CONTROL_FOR[key]);
+        if (control) { control.value = ''; control.classList.remove('active'); }
+        load();
+      };
+      return drop;
+    });
 }
 
 /* ---------------- detail drawer ---------------- */

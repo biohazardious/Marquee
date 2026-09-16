@@ -1,6 +1,6 @@
 /* The shell: sidebar, routing, and the few actions that span pages. */
 
-import { $, banner, clear, count, debounce, el, human } from './util.js';
+import { $, append, banner, clear, count, debounce, duration, el, human } from './util.js';
 import * as api from './api.js';
 import * as changes from './changes.js';
 import * as leftout from './leftout.js';
@@ -9,23 +9,28 @@ import * as selection from './selection.js';
 import * as settings from './settings.js';
 import * as activity from './activity.js';
 import * as wanted from './wanted.js';
+import * as overview from './overview.js';
+import { icon } from './icons.js';
 
+/* In the order the work happens: what is here, what you want, what is missing, what
+   the run will do, and then the machinery. The group labels say so. */
 const PAGES = [
-  { id: 'library', label: 'Library', icon: '🕹' },
-  { id: 'selection', label: 'Selection', icon: '☑' },
-  { id: 'wanted', label: 'Wanted', icon: '⌾' },
-  { id: 'leftout', label: 'Left out', icon: '🗃' },
-  { id: 'changes', label: 'Transfer', icon: '⇄' },
-  { id: 'activity', label: 'Activity', icon: '⇅' },
-  { id: 'settings', label: 'Settings', icon: '⚙' },
-  { id: 'system', label: 'System', icon: '☰' },
+  { id: 'overview', label: 'Overview', icon: 'overview', group: '' },
+  { id: 'library', label: 'Library', icon: 'library', group: 'Collection' },
+  { id: 'selection', label: 'Selection', icon: 'selection' },
+  { id: 'leftout', label: 'Left out', icon: 'leftout' },
+  { id: 'wanted', label: 'Wanted', icon: 'wanted', group: 'Getting it there' },
+  { id: 'changes', label: 'Transfer', icon: 'transfer' },
+  { id: 'activity', label: 'Activity', icon: 'activity' },
+  { id: 'settings', label: 'Settings', icon: 'settings', group: 'Setup' },
+  { id: 'system', label: 'System', icon: 'system' },
 ];
 
 /* "#library/galaga" opens the library with that game's panel already showing, so a
    game can be linked to and come back the same way after a reload. */
 function route() {
-  const [name, detail] = (location.hash || '#library').slice(1).split('/');
-  return { page: PAGES.some((entry) => entry.id === name) ? name : 'library', detail };
+  const [name, detail] = (location.hash || '#overview').slice(1).split('/');
+  return { page: PAGES.some((entry) => entry.id === name) ? name : 'overview', detail };
 }
 
 let page = route().page;
@@ -60,6 +65,7 @@ function show(next, detail) {
   if (next === 'activity') { activity.render(api.state.data); activity.poll(); }
   if (next === 'settings') { settings.render(); settings.renderReleases(api.state.releases); }
   if (next === 'system') renderSystem();
+  if (next === 'overview') overview.render(withStale(api.state.data));
   if (detail && next === 'library') library.open(detail);
 }
 
@@ -74,12 +80,13 @@ function buildNav() {
   const nav = $('nav');
   clear(nav);
   for (const entry of PAGES) {
+    if (entry.group) nav.append(el('div', { class: 'group', text: entry.group }));
     nav.append(el('a', {
       href: `#${entry.id}`, id: `nav-${entry.id}`,
       class: entry.id === page ? 'on' : '',
       onclick: (event) => { event.preventDefault(); show(entry.id); },
     },
-      el('span', { class: 'ico', text: entry.icon }),
+      icon(entry.icon),
       el('span', { text: entry.label }),
       entry.id === 'activity' ? el('span', { class: 'tag hidden', id: 'activityTag' }) : null,
       entry.id === 'wanted' ? el('span', { class: 'tag hidden', id: 'wantedTag' }) : null));
@@ -91,11 +98,15 @@ function renderSidefoot(data) {
   clear(foot);
   const plan = data.plan;
   const resolution = data.resolution;
+  // Four figures that used to be three, and named for what they are. "Games 0" under
+  // "1,144 on disk" read as a bug; it was the library, not the torrent folder.
   foot.append(
-    row('MAME', resolution?.xml_version ? `0.${String(resolution.xml_version).replace(/^0\./, '')}` : '—'),
-    // What is in the library, not what happens to be sitting in the torrent folder.
-    row('Games', plan ? count(plan.library_machines ?? plan.machines) : '—'),
-    row('Library', plan ? (plan.library_bytes_human || plan.bytes_human) : '—'));
+    row('Release', resolution?.xml_version ? `MAME ${resolution.xml_version}` : '—'),
+    row('Selected', plan ? count(plan.wanted) : '—'),
+    row('Downloaded', plan ? count(plan.machines) : '—'),
+    row('In library', plan
+      ? `${count(plan.library_machines ?? 0)} · ${plan.library_bytes_human || '0 B'}`
+      : '—'));
 }
 
 /* Checking the library against the release, rather than trusting the filenames.
@@ -283,6 +294,7 @@ function renderSystem() {
 
 function onState(data) {
   renderSidefoot(data);
+  renderStatusJob(data);
 
   // A library folder that is not there plans happily and then writes hundreds of
   // gigabytes somewhere nobody meant -- inside a container, most likely.
@@ -322,9 +334,7 @@ function onState(data) {
     leftout.adopt(data.config);
     library.fillGenres($('libGenre'), data.plan);
     selection.fillGenres($('selGenre'), data.plan);
-    $('planStats').textContent =
-      `${count(data.plan.wanted)} games · ${data.plan.wanted_bytes_human || data.plan.bytes_human}`
-      + (data.plan.machines ? ` · ${count(data.plan.machines)} on disk` : '');
+    renderPlanPill(data);
     // The tree is drawn before the first poll lands, so it has to be redrawn when the
     // plan it describes finally arrives.
     showSelectionSaveState();
@@ -341,6 +351,7 @@ function onState(data) {
     // so a second Save put them back. The form on screen is never redrawn here --
     // values() reads the inputs, not this -- so nothing being typed is disturbed.
     settings.adopt(data.config);
+    if ($('settingsPath')) $('settingsPath').textContent = data.config.settings_path || '';
     const lists = {
       genres: data.config.blacklist_genres,
       categories: data.config.blacklist_categories,
@@ -356,7 +367,7 @@ function onState(data) {
     }
   }
 
-  const busy = ['planning', 'copying'].includes(data.state);
+  const busy = ['planning', 'copying', 'checking'].includes(data.state);
   $('planBtn').disabled = busy;
   // It opens the preview rather than starting anything, so there is no reason to
   // lock it while a job runs -- watching what a run is doing is the point.
@@ -369,6 +380,7 @@ function onState(data) {
   }
 
   if (page === 'activity') activity.render(data);
+  if (page === 'overview') overview.render(withStale(data));
   if (page === 'selection') updateSelectionSummary();
   // The diff is worked out when a plan is built and taken again when the library is
   // checked, so the page that shows it has to come back for it when either finishes.
@@ -382,6 +394,148 @@ function onState(data) {
 let settingsAdopted = false;
 let hadPlan = false;
 let lastState = '';
+
+/* ---------------- the status bar ---------------- */
+
+/* How fast the current stage is moving, from what the last half minute of polls
+   said, so the bar can say "3m left" rather than only a percentage. Bytes for a
+   transfer, machines for a check or a parse; the arithmetic is the same. */
+const trend = { stage: null, samples: [] };
+
+function rateOf(progress) {
+  const now = Date.now();
+  if (trend.stage !== progress.stage) { trend.stage = progress.stage; trend.samples = []; }
+  trend.samples.push({ t: now, done: progress.done });
+  trend.samples = trend.samples.filter((sample) => now - sample.t <= 30000);
+  const first = trend.samples[0];
+  const last = trend.samples[trend.samples.length - 1];
+  if (!first || last.t - first.t < 1500) return 0;
+  return (last.done - first.done) / ((last.t - first.t) / 1000);
+}
+
+function renderStatusJob(data) {
+  const host = $('statusJob');
+  if (!host) return;
+  clear(host);
+  const state = data.state || 'idle';
+  const progress = data.progress;
+  const plan = data.plan;
+
+  const bar = (percent) => el('span', { class: 'mini-bar' },
+    el('i', { style: `width:${Math.max(0, Math.min(100, percent))}%` }));
+
+  if (['planning', 'checking', 'copying'].includes(state)) {
+    const verb = { planning: 'Building the plan', checking: 'Checking the library',
+      copying: 'Transferring' }[state];
+    const parts = [el('span', { class: 'pulse' }), el('b', { text: verb })];
+    if (progress && progress.total) {
+      const rate = rateOf(progress);
+      const left = rate > 0 ? (progress.total - progress.done) / rate : 0;
+      const bytes = progress.stage === 'copy';
+      const figure = bytes
+        ? `${human(progress.done)} of ${human(progress.total)}`
+        : `${count(progress.done)} of ${count(progress.total)}`;
+      parts.push(el('span', { class: 'muted', text: progress.stage === 'copy' || progress.stage === 'verify'
+        || progress.stage === 'parse' ? figure : progress.stage }));
+      parts.push(bar(progress.percent));
+      if (bytes && rate > 0) parts.push(el('span', { class: 'muted', text: `${human(rate)}/s` }));
+      if (left >= 1) parts.push(el('span', { class: 'accent', text: `${duration(left)} left` }));
+      if (progress.detail) parts.push(el('span', { class: 'dim detail', text: progress.detail }));
+    } else if (progress && progress.stage) {
+      parts.push(el('span', { class: 'muted', text: progress.stage }));
+    } else {
+      parts.push(el('span', { class: 'muted', text: 'starting…' }));
+    }
+    append(host, ...parts);
+    host.className = 'status-job live';
+    return;
+  }
+  if (state === 'error') {
+    append(host, icon('warn'), el('b', { text: 'Stopped' }),
+      el('span', { class: 'muted detail', text: data.error || '' }));
+    host.className = 'status-job bad';
+    return;
+  }
+  if (state === 'done' && data.summary) {
+    const s = data.summary;
+    append(host, icon('check'), el('b', { text: s.cancelled ? 'Transfer stopped early' : 'Transfer finished' }),
+      el('span', { class: 'muted', text:
+        `${count(s.copied)} copied · ${count(s.moved)} moved · ${count(s.updated)} replaced`
+        + (s.deleted ? ` · ${count(s.deleted)} deleted` : '')
+        + (s.failed ? ` · ${count(s.failed)} failed` : '') + ` · ${s.bytes_human} in ${duration(s.seconds)}` }));
+    host.className = `status-job ${s.failed ? 'warn' : 'good'}`;
+    return;
+  }
+  if (plan) {
+    const moving = (plan.sync?.new?.count || 0) + (plan.sync?.update?.count || 0)
+      + (plan.sync?.move?.count || 0);
+    append(host, icon('check'), el('b', { text: 'Plan ready' }),
+      el('span', { class: 'muted', text: moving
+        ? `${count(moving)} files · ${plan.to_transfer_human} to transfer`
+        : 'nothing to transfer' }));
+    host.className = 'status-job';
+    return;
+  }
+  append(host, icon('info'), el('span', { class: 'muted', text: 'Nothing running — build a plan to start.' }));
+  host.className = 'status-job off';
+}
+
+function renderStatusClient(queue) {
+  const host = $('statusClient');
+  if (!host) return;
+  clear(host);
+  if (!queue || !queue.configured) {
+    append(host, el('i', { class: 'dot off' }), el('span', { class: 'dim', text: 'No download client' }));
+    host.className = 'status-client off';
+    return;
+  }
+  if (queue.error) {
+    // The short reason; the whole sentence is in the tooltip and on Activity.
+    const reason = queue.error.length > 60 ? queue.error.split(': ').pop() : queue.error;
+    append(host, el('i', { class: 'dot bad' }), el('b', { text: 'qBittorrent unreachable' }),
+      el('span', { class: 'muted detail', title: queue.error, text: reason }));
+    host.className = 'status-client bad';
+    return;
+  }
+  if (queue.downloading) {
+    append(host, el('i', { class: 'dot live' }),
+      el('b', { text: `Downloading ${count(queue.downloading)} ${queue.downloading === 1 ? 'release' : 'releases'}` }),
+      el('span', { class: 'muted', text: `${queue.speed_human} · ${queue.bytes_left_human} left` }),
+      queue.eta ? el('span', { class: 'accent', text: `${duration(queue.eta)} left` }) : null);
+    host.className = 'status-client live';
+    return;
+  }
+  append(host, el('i', { class: 'dot good' }), el('b', { text: 'qBittorrent connected' }),
+    el('span', { class: 'muted', text: queue.torrents.length
+      ? `${count(queue.torrents.length)} of this app's torrents · ${count(queue.seeding || 0)} seeding`
+      : 'nothing of this app\'s in the queue' }));
+  host.className = 'status-client good';
+}
+
+/* Whether the plan in hand still describes the settings on screen. */
+function withStale(data) {
+  return { ...data, stale: Boolean(data.plan) && dirty() };
+}
+
+/* The topbar's one-line answer to "is the plan current?", in place of a run of
+   numbers the sidebar already shows. */
+function renderPlanPill(data) {
+  const pill = $('planStats');
+  if (!pill) return;
+  clear(pill);
+  const plan = data.plan;
+  if (!plan) { pill.className = 'planpill off'; pill.textContent = 'No plan yet'; return; }
+  if (dirty()) {
+    pill.className = 'planpill warn';
+    append(pill, icon('warn'), 'Settings changed — rebuild the plan');
+    return;
+  }
+  const moving = (plan.sync?.new?.count || 0) + (plan.sync?.update?.count || 0)
+    + (plan.sync?.move?.count || 0);
+  pill.className = `planpill ${moving ? 'good' : ''}`;
+  append(pill, icon(moving ? 'transfer' : 'check'),
+    moving ? `${plan.to_transfer_human} to transfer` : 'Plan is current');
+}
 
 function updateSelectionSummary() {
   const host = $('selectionSummary');
@@ -507,7 +661,30 @@ async function boot() {
       banner(error.message, 'bad');
     }
   };
+  $('menuBtn').append(icon('menu'));
+  for (const box of document.querySelectorAll('.search:not(:has(.ico))')) box.prepend(icon('search'));
   $('menuBtn').onclick = () => $('sidebar').classList.toggle('open');
+  overview.onNavigate(show);
+  api.subscribeQueue(renderStatusClient);
+  api.subscribeQueue(() => { if (page === 'activity') activity.poll(); });
+  // "/" jumps to the search box of whatever page has one -- the habit every
+  // modern list app has trained.
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== '/' || event.target.matches('input, textarea, select')) return;
+    const box = document.querySelector(`#page-${page} .search input`);
+    if (box) { event.preventDefault(); box.focus(); box.select(); }
+  });
+  // A filter that is set looks set. Every <select> in a toolbar gets the accent
+  // border while it is narrowing something.
+  document.addEventListener('change', (event) => {
+    const select = event.target;
+    if (select.matches('.toolbar select, .libsum select')) {
+      // Narrowing means "not the first choice": the art-kind picker always has a
+      // value and is never a filter.
+      const first = select.options[0] ? select.options[0].value : '';
+      select.classList.toggle('active', select.value !== first);
+    }
+  });
   const selBar = selection.toolbar();
   $('treeSearch').replaceWith(selBar.search);
   selBar.search.id = 'treeSearch';

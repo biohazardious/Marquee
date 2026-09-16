@@ -1,12 +1,14 @@
 /* Activity: what the job is doing now, and what the download client is fetching. */
 
 import { $, append, clear, count, duration, el, human } from './util.js';
-import { log, queue as fetchQueue } from './api.js';
+import { log, refreshQueue, state as store } from './api.js';
 
 let lastQueue = null;
 
 export async function poll() {
-  try { lastQueue = await fetchQueue(); } catch { lastQueue = null; }
+  // The same answer the status bar reads; one request serves both.
+  lastQueue = store.queue || null;
+  if (!lastQueue) { try { lastQueue = await refreshQueue(); } catch { lastQueue = null; } }
   renderQueue();
 }
 
@@ -27,39 +29,64 @@ export function render(data) {
   renderQueue();
 }
 
+/* What each state means to a person, and which of the three steps it belongs to.
+   "planned…" with an ellipsis read as if something were still happening. */
+const STATES = {
+  idle: ['Nothing running', 'plan'],
+  planning: ['Building the plan', 'plan'],
+  planned: ['Plan ready', 'plan'],
+  checking: ['Checking the library', 'check'],
+  copying: ['Transferring', 'transfer'],
+  done: ['Transfer finished', 'transfer'],
+  error: ['Stopped on an error', 'plan'],
+};
+
 function jobPanel(data) {
   const state = data.state || 'idle';
+  const [label, step] = STATES[state] || [state, 'plan'];
   const progress = data.progress;
   const summary = data.summary;
+  const running = ['planning', 'checking', 'copying'].includes(state);
 
   const body = el('div', { class: 'body' });
 
-  if (state === 'idle') {
-    body.append(el('div', { class: 'muted', text: 'Nothing running.' }));
-  } else if (progress) {
+  // The three things a job can be, as a strip: which one this is, and what it is
+  // doing inside it.
+  body.append(el('div', { class: 'steps' },
+    ...[['plan', 'Plan'], ['check', 'Check'], ['transfer', 'Transfer']].map(([key, name]) =>
+      el('span', { class: `step ${key === step ? (running ? 'live' : 'on') : ''}`, text: name }))));
+
+  if (running && progress) {
     append(body,
-      el('div', { class: 'rowflex', style: 'margin-bottom:8px' },
+      el('div', { class: 'rowflex', style: 'margin:14px 0 8px' },
         el('b', { text: progress.stage }),
         el('span', { class: 'spacer', style: 'flex:1' }),
         el('span', { class: 'muted', text: `${progress.percent}%` })),
       el('div', { class: 'bar' }, el('i', { style: `width:${progress.percent}%` })),
       progress.detail ? el('div', { class: 'hint', text: progress.detail }) : null);
-  } else {
-    body.append(el('div', { class: 'muted', text: `${state}…` }));
+  } else if (running) {
+    body.append(el('div', { class: 'muted', style: 'margin-top:14px', text: `${label}…` }));
+  } else if (state === 'planned' && data.plan) {
+    body.append(el('div', { class: 'muted', style: 'margin-top:14px',
+      text: `${count(data.plan.wanted)} games selected, ${count(data.plan.machines)} on disk. `
+        + 'The Transfer page says what a run would do.' }));
   }
 
   if (summary) {
     body.append(el('div', { class: 'cards', style: 'margin-top:18px' },
       stat('Copied', count(summary.copied)),
-      stat('Updated', count(summary.updated)),
+      stat('Replaced', count(summary.updated)),
       stat('Moved', count(summary.moved)),
-      stat('Skipped', count(summary.skipped)),
-      stat('Transferred', summary.bytes_human, summary.rate_human)));
+      stat('Deleted', count(summary.deleted)),
+      stat('Left alone', count(summary.skipped)),
+      summary.failed ? stat('Failed', count(summary.failed)) : null,
+      stat('Transferred', summary.bytes_human, `${summary.rate_human} · ${duration(summary.seconds)}`)));
+    if (summary.cancelled) body.append(el('div', { class: 'banner warn', text: 'Stopped before the end. Whatever arrived is kept; the next run continues from there.' }));
   }
   if (data.error) body.append(el('div', { class: 'banner bad', text: data.error }));
 
   return el('div', { class: 'panel' },
-    el('h2', {}, 'Current job', el('span', { class: 'sub', text: state })), body);
+    el('h2', {}, running ? el('span', { class: 'pulse' }) : null, label), body);
 }
 
 function stat(key, value, note) {
@@ -77,7 +104,7 @@ function renderQueue() {
   const body = el('div', { class: 'body tight' });
   const panel = el('div', { class: 'panel' },
     el('h2', {}, 'Downloads',
-      el('span', { class: 'sub', text: lastQueue?.configured ? 'qBittorrent' : 'no client configured' }),
+      el('span', { class: 'sub', text: !lastQueue ? '' : lastQueue.configured ? 'qBittorrent' : 'no client configured' }),
       el('span', { class: 'spacer' }),
       lastQueue?.speed
         ? el('span', { class: 'muted', text: `${human(lastQueue.speed)}/s` })
@@ -85,7 +112,11 @@ function renderQueue() {
     body);
   host.append(panel);
 
-  if (!lastQueue || !lastQueue.configured) {
+  if (!lastQueue) {
+    body.append(el('div', { class: 'body' }, el('div', { class: 'muted', text: 'Asking the download client…' })));
+    return;
+  }
+  if (!lastQueue.configured) {
     body.append(el('div', { class: 'body' },
       el('div', { class: 'muted', text: 'Set a download client in Settings to fetch releases from here.' })));
     return;

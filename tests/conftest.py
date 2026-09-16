@@ -13,6 +13,17 @@ from marquee.config import Config  # noqa: E402
 from marquee.reporting import CollectingReporter  # noqa: E402
 
 
+
+# What a finished file looks like to the plan: a zip ends with its end-of-archive
+# record, a CHD starts with its magic. Still 300 bytes a ROM, so every size the tests
+# assert holds; but a torrent client's pre-allocated placeholder would not pass.
+ROM_BYTES = b"rom" * 90 + b"PK\x05\x06" + b"\x00" * 26
+assert len(ROM_BYTES) == 300
+
+
+def chd_bytes(size):
+    return b"MComprHD" + b"c" * (size - 8)
+
 @pytest.fixture(autouse=True)
 def isolated_cache(tmp_path, monkeypatch):
     """Keep every test out of the user's real ~/.cache/marquee."""
@@ -82,17 +93,17 @@ def romset(tmp_path, config):
     # measurable so the Selection tab can show what excluding it saves.
     for name in ("goodgame", "impgame", "dotgame", "maturegame", "nocat", "boardgame1",
                  "twodisk", "parentchd", "clonemerged", "cloneown", "clonestray"):
-        (rom_dir / f"{name}.zip").write_bytes(b"rom" * 100)
+        (rom_dir / f"{name}.zip").write_bytes(ROM_BYTES)
 
     (chd_dir / "twodisk").mkdir()
-    (chd_dir / "twodisk" / "ok.chd").write_bytes(b"chd" * 200)
+    (chd_dir / "twodisk" / "ok.chd").write_bytes(chd_bytes(600))
     (chd_dir / "parentchd").mkdir()
-    (chd_dir / "parentchd" / "pdisk.chd").write_bytes(b"chd" * 200)
+    (chd_dir / "parentchd" / "pdisk.chd").write_bytes(chd_bytes(600))
     (chd_dir / "cloneown").mkdir()
-    (chd_dir / "cloneown" / "odisk.chd").write_bytes(b"chd" * 300)
+    (chd_dir / "cloneown" / "odisk.chd").write_bytes(chd_bytes(900))
     # clonestray has a disk of its own, but the collection keeps it in the parent's
     # folder -- which is what real CHD sets do.
-    (chd_dir / "parentchd" / "sdisk.chd").write_bytes(b"chd" * 400)
+    (chd_dir / "parentchd" / "sdisk.chd").write_bytes(chd_bytes(1200))
 
     config.rom_dir = str(rom_dir)
     config.chd_dir = str(chd_dir)

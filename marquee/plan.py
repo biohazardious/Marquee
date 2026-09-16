@@ -67,6 +67,10 @@ class PlannedItem:
     # still listable: the selection tree has to be able to show what is inside a
     # category before anyone can decide to put it back.
     excluded: bool = False
+    # A file with this name is in the source folder but is not a finished file: a
+    # torrent client's pre-allocated placeholder, or a download still in progress.
+    # Counted as not downloaded, and said to be downloading rather than missing.
+    partial: bool = False
 
     @property
     def is_clone(self):
@@ -132,6 +136,8 @@ class CopyPlan:
     # and used to be kept nowhere at all, so the tree said "Board Game / Cards: 1" and
     # opening it found nothing.
     excluded_items: list = field(default_factory=list)
+    # Machines whose zip is in the source folder as a placeholder or a part-download.
+    partial_roms: list = field(default_factory=list)
     missing_roms: list = field(default_factory=list)
     missing_chds: list = field(default_factory=list)
     mature_filtered: list = field(default_factory=list)
@@ -264,6 +270,35 @@ def _leaf_label(category):
     return (tail if separator else head).strip() or label
 
 
+ZIP_END_RECORD = b"PK\x05\x06"
+CHD_MAGIC = b"MComprHD"
+
+
+def looks_complete(path):
+    """Whether a file in the source folder is a finished file, not a placeholder.
+
+    A zip ends with its central directory and an end-of-archive record; a torrent
+    client's pre-allocated file, or one still arriving, ends in zeros. The record is
+    in the last 22 bytes of a plain zip and a little further in from a TorrentZip'd
+    one (which carries a comment), so the last 128 bytes are enough. A CHD is
+    recognised by its header; a placeholder has none. One small read per file:
+    fourteen thousand of them take well under a second.
+    """
+    lower = path.lower()
+    try:
+        with open(path, "rb") as handle:
+            if lower.endswith(".zip"):
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - 128))
+                return ZIP_END_RECORD in handle.read()
+            if lower.endswith(".chd"):
+                return handle.read(len(CHD_MAGIC)) == CHD_MAGIC
+    except OSError:
+        return False
+    return True
+
+
 def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature):
     """Decide what would be copied. `folder_for` maps a category to (folder, is_mature).
 
@@ -299,18 +334,32 @@ def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature):
 
         rom_path = os.path.join(rom_dir, name + ".zip")
         try:
-            item.rom_bytes = os.stat(rom_path).st_size
-            item.rom_source = rom_path
+            size = os.stat(rom_path).st_size
         except OSError:
-            pass
+            size = None
+        if size is not None:
+            # Being there is not being finished. qBittorrent allocates every selected
+            # file at its full size before a byte arrives, so a folder can hold
+            # thousands of zips that are nothing but zeros -- 5,442 of 14,279 on the
+            # set this was found on -- and a size check calls every one downloaded.
+            if looks_complete(rom_path):
+                item.rom_bytes = size
+                item.rom_source = rom_path
+            else:
+                item.partial = True
 
         if info.get("chd_req"):
             item.chd_name = info.get("chd_folder")
             item.disks = list(info.get("chd_disks") or [])
             found, missing = resolve_disks(name, info.get("parent"),
                                            item.disks, chd_dir)
-            item.chd_sources = found
-            item.chd_sizes = [_file_size(path) for path in found]
+            finished = [path for path in found if looks_complete(path)]
+            if len(finished) < len(found):
+                item.partial = True
+                missing = missing + [os.path.splitext(os.path.basename(path))[0]
+                                     for path in found if path not in finished]
+            item.chd_sources = finished
+            item.chd_sizes = [_file_size(path) for path in finished]
             item.chd_bytes = sum(item.chd_sizes)
             item.missing_disks = missing
 
@@ -365,6 +414,8 @@ def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature):
             plan.excluded_items.append(item)
             continue
 
+        if item.partial:
+            plan.partial_roms.append(name)
         if item.rom_source is None:
             plan.missing_roms.append(name)
         for disk in item.missing_disks:
@@ -376,6 +427,7 @@ def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature):
 
     plan.missing_roms.sort()
     plan.missing_chds.sort()
+    plan.partial_roms.sort()
     plan.absent_items.sort(key=lambda item: item.name)
     plan.excluded_items.sort(key=lambda item: item.name)
     # Weight first, because that is what a size decision is made on -- but on a set

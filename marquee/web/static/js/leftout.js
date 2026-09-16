@@ -7,6 +7,7 @@
    door, because it was dropped before anything else ran and appeared in no list, no
    search and no tree. */
 
+import { icon } from './icons.js';
 import { $, append, badges, clear, count, debounce, el, human } from './util.js';
 import { api, machines as fetchMachines, post, refresh } from './api.js';
 
@@ -267,7 +268,7 @@ function controls() {
   BAR.root = el('div', { class: 'rowflex libsum' },
     BAR.count, BAR.bytes,
     el('span', { style: 'flex:1' }),
-    el('span', { class: 'search' }, el('span', { class: 'ico', text: '⌕' }), BAR.search),
+    el('span', { class: 'search' }, icon('search'), BAR.search),
     BAR.condition, BAR.reason, BAR.action);
   return BAR.root;
 }
