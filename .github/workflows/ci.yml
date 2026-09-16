@@ -1,0 +1,110 @@
+# Test on every push and pull request; build the image and push it to Docker Hub
+# from master and from version tags.
+#
+# Two repository secrets are needed for the push:
+#   DOCKERHUB_USERNAME  the Docker Hub account
+#   DOCKERHUB_TOKEN     an access token for it (Account settings -> Security)
+# and, optionally, a repository variable DOCKERHUB_IMAGE when the image should not
+# be called biohazardious/marquee.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest the package claims to support, and the one the image ships.
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      # The static JavaScript checks shell out to node; the runner has it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" pyflakes
+      - name: Lint
+        run: python -m pyflakes marquee tests
+      - name: Test
+        run: python -m pytest -q -p no:cacheprovider
+
+  image:
+    name: Docker image
+    needs: test
+    # Only what lands on master or a tag is published; a pull request is built to
+    # prove the Dockerfile still works, and thrown away.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      IMAGE: ${{ vars.DOCKERHUB_IMAGE || 'biohazardious/marquee' }}
+      PUSH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to Docker Hub
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # master -> latest; v0.4.0 -> 0.4.0, 0.4 and latest; every build -> the
+          # short commit sha, so a running container can always be traced back.
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.title=Marquee
+            org.opencontainers.image.description=Categorise, acquire and update a MAME romset
+            org.opencontainers.image.licenses=GPL-3.0-or-later
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # amd64 for the NAS and the desktop, arm64 for the small boxes people
+          # run next to their consoles.
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Update the Docker Hub description
+        # The README is the image's description; keeping the two in step by hand
+        # never lasts.
+        if: env.PUSH == 'true' && github.ref == 'refs/heads/master'
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.IMAGE }}
+          short-description: A MAME library manager in the shape of Sonarr

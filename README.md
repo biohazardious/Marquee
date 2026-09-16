@@ -1,5 +1,7 @@
 # Marquee — a MAME library manager
 
+[![CI](https://github.com/biohazardious/Marquee/actions/workflows/ci.yml/badge.svg)](https://github.com/biohazardious/Marquee/actions/workflows/ci.yml)
+[![Docker Hub](https://img.shields.io/docker/v/biohazardious/marquee?label=docker&sort=semver)](https://hub.docker.com/r/biohazardious/marquee)
 [![Licence: GPL v3](https://img.shields.io/badge/licence-GPL--3.0-blue.svg)](LICENSE)
 
 A MAME library manager in the shape of Sonarr/Radarr: you declare what you want, it
@@ -40,11 +42,28 @@ anywhere you need a categorised MAME set.
 
 ## Running it
 
+The image is on Docker Hub as `biohazardious/marquee` (amd64 and arm64), built by
+[the CI workflow](.github/workflows/ci.yml) from every push to `master` and every
+`v*` tag:
+
 ```bash
 cp .env.example .env        # point CONFIG, DOWNLOADS and LIBRARY at your folders
+docker compose pull         # or `docker compose build` to build from this checkout
 docker compose up -d
 docker compose logs         # the first line has the URL, with the API key in it
 ```
+
+Without compose:
+
+```bash
+docker run -d --name marquee -p 8585:8585 \
+  -v /path/to/config:/config -v /path/to/downloads:/downloads \
+  -v /path/to/library:/library -e PUID=$(id -u) -e PGID=$(id -g) \
+  biohazardious/marquee:latest
+```
+
+Tags: `latest` follows `master`; a release `v0.4.0` is also `0.4.0` and `0.4`; every
+build carries its short commit as `sha-abc1234`.
 
 Open the URL it prints. The key is stored in the browser after the first visit, so
 plain `http://localhost:8585/` works from then on; it also lives in `config/api_key`
@@ -523,6 +542,18 @@ summary = pipeline.execute(plan, config)              # only if you decide to
 
 Pass a `Reporter` subclass to either call to receive progress and messages instead of
 having them printed.
+
+### Releasing
+
+CI runs the tests on Python 3.9 and 3.13 for every push and pull request, and pushes
+the image for `master` and tags. Two repository secrets make the push possible:
+`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (an access token from Docker Hub's
+Account settings → Security). To publish a version: bump `version` in
+`pyproject.toml`, then
+
+```bash
+git tag v0.4.0 && git push origin v0.4.0
+```
 
 ### Tests
 

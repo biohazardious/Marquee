@@ -6,7 +6,9 @@
 # mapping in Settings -> Download client instead.
 services:
   marquee:
-    image: marquee:latest
+    # The published image; `docker compose pull` gets it. `build: .` stays so a
+    # checkout can still build its own with `docker compose build`.
+    image: biohazardious/marquee:latest
     build: .
     container_name: marquee
     environment:
