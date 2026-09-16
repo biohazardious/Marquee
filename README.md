@@ -80,7 +80,13 @@ working; clear it and the file's key is back in force.
 | `PUID` / `PGID` | `1000` | The user the files should belong to |
 | `TZ` | `Etc/UTC` | Timezone, for the log |
 | `MARQUEE_API_KEY` | *(generated)* | The key the web UI asks for |
-| `MARQUEE_PORT` | `8585` | The port inside the container |
+| `MARQUEE_PORT` (or `PORT`) | `8585` | The port inside the container. The health check follows it. |
+| `MARQUEE_NO_UPDATE_CHECK` | *(unset)* | Set to `1` to stop it asking GitHub for newer tags |
+
+The running version and build (`v0.5.0@7c17217`, or `local` for an image built by
+hand) are at the bottom of the sidebar and on the System page, which also says
+whether a newer release has been tagged -- checked against GitHub twice a day, with
+nothing downloaded.
 
 Or without Docker:
 
@@ -160,6 +166,9 @@ A dark web UI with nine pages, in the order the work happens:
   [What a transfer will do](#what-a-transfer-will-do).
 - **Activity** — the running job, the download queue, and the log.
 - **Settings** — media management, download client (with a Test button), indexer.
+  Only the ROM folder and the library are required: the CHD folder defaults to the
+  ROM folder (the disks are found inside it), and the MAME release to whatever the
+  source folder's name says.
   The Library field has a **Test** button: for a share on the console
   (`smb://192.168.1.20/Batocera3/roms/mame`) it connects and reads the top level --
   "Reached 192.168.1.20, share Batocera3: 48 entries (Music, Multiplay, …)" -- since
@@ -507,6 +516,26 @@ docker compose up -d --force-recreate     # re-resolves every mount
 It is worth knowing which way round it went: if the old folder was renamed rather than
 deleted, the files are still there under the new name, and the mount is what was
 keeping them reachable.
+
+### qBittorrent says "error" as soon as a download starts
+
+Downloads land where **qBittorrent** puts them -- its default folder, or the
+`marquee` category's folder -- and Marquee never changes that. An "error" state the
+moment a torrent starts is nearly always that folder not existing, or not being
+writable, *inside qBittorrent's own container*. Fix it there (a folder it can write
+to, or the category's save path in its settings); Marquee's Download folder setting
+has nothing to do with it.
+
+What Marquee's settings decide is only how *it* finds those files afterwards, and
+normally that takes one setting: the **Download folder**, the torrent folder as this
+container sees it. Each torrent's folder is looked for **by name** inside it, so
+qBittorrent may call the same folder `/data/torrents/MAME 0.289 ROMs (non-merged)`
+and Marquee `/downloads/MAME 0.289 ROMs (non-merged)` and nothing needs writing
+down. A **remote path mapping** (`qBittorrent's path -> this app's path`, one per
+line) is only for when that lookup cannot work. The Test button beside the client
+settings says where a new download would land, how Marquee sees it and whether it
+can; if an earlier Marquee left the `marquee` category pinned to a folder qBittorrent
+cannot use, the same result offers a one-click reset to qBittorrent's default folder.
 
 ### The UI is reachable but the download client is not
 

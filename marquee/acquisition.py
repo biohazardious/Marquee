@@ -158,7 +158,7 @@ def resume(client, infohash, indices, reporter=None):
     return result
 
 
-def torrent_root(client, infohash, mappings=None):
+def torrent_root(client, infohash, mappings=None, download_dir=None):
     """Where this tool can read the torrent's files.
 
     qBittorrent reports paths as *it* sees them. When it runs in another container or
@@ -168,7 +168,37 @@ def torrent_root(client, infohash, mappings=None):
     entry = client.one(infohash)
     if entry is None:
         raise MarqueeError(f"The download client has no torrent {infohash[:12]}.")
-    return remap(entry["content_path"] or entry["save_path"], mappings)
+    return locate(entry["content_path"] or entry["save_path"], mappings, download_dir)
+
+
+def locate(client_path, mappings=None, download_dir=None):
+    """This app's path for a folder qBittorrent names, without anyone explaining.
+
+    A mapping, when there is one, wins. Otherwise the torrent's folder is looked for
+    by its name inside the download folder: qBittorrent may call it
+    /data/torrents/MAME 0.289 ROMs (non-merged) and this container /downloads/MAME
+    0.289 ROMs (non-merged), and the last part is the same on both sides. That is
+    the whole of what a "remote path mapping" used to have to be typed for.
+    """
+    mapped = remap(client_path, mappings)
+    if mapped != client_path or os.path.isdir(mapped) or not download_dir:
+        return mapped
+    name = os.path.basename(client_path.rstrip("/"))
+    if name:
+        candidate = os.path.join(download_dir, name)
+        if os.path.isdir(candidate):
+            return candidate
+    return mapped
+
+
+def inferred_mapping(client_path, download_dir):
+    """The (qBittorrent's folder, this app's folder) pair `locate` would use, or None."""
+    if not client_path or not download_dir:
+        return None
+    name = os.path.basename(client_path.rstrip("/"))
+    if name and os.path.isdir(os.path.join(download_dir, name)):
+        return (os.path.dirname(client_path.rstrip("/")), download_dir)
+    return None
 
 
 def remap(path, mappings=None):

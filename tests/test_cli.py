@@ -77,7 +77,8 @@ class TestLoadConfig:
         with pytest.raises(MarqueeError) as error:
             cli.load_config(args(rom_dir=str(tmp_path)))
         message = str(error.value)
-        assert "chd_dir" in message and "copy_path" in message and "rom_dir" not in message
+        assert "copy_path" in message and "rom_dir" not in message
+        assert "chd_dir" not in message, "the CHD folder defaults to the ROM folder"
 
     def test_obsolete_key_is_called_out(self, settings_file, capsys):
         cli.load_config(args(config=settings_file(extra="genre_ini = ./g.ini\n")))

@@ -13,7 +13,10 @@ from dataclasses import dataclass, field, replace
 from . import atomic, backends
 from .errors import ConfigError
 
-REQUIRED_PATHS = ("rom_dir", "chd_dir", "copy_path")
+# The CHD folder is not required: left empty it is the ROM folder, and the CHD set is
+# found inside it the same way the ROM set is. A first run used to stop on "missing
+# chd_dir" for someone who has no disks at all.
+REQUIRED_PATHS = ("rom_dir", "copy_path")
 # Paths in settings.ini are resolved against the settings file, never the shell's cwd.
 RESOLVED_PATHS = ("mame_xml", "catlist_ini", "category_ini", "screenless_ini",
                   "genre_ini", "rom_dir", "chd_dir")
@@ -76,6 +79,10 @@ class Config:
     # Settings that were read but no longer do anything, so the CLI can say so.
     # A plain attribute would not survive dataclasses.replace().
     obsolete_keys: list = field(default_factory=list)
+
+    def __post_init__(self):
+        if not self.chd_dir and self.rom_dir:
+            self.chd_dir = self.rom_dir
 
     @property
     def missing_paths(self):

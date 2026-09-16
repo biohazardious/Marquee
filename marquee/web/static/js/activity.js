@@ -142,8 +142,16 @@ function renderQueue() {
     el('tbody', {}, lastQueue.torrents.map((torrent) => el('tr', { style: 'cursor:default' },
       el('td', {}, el('b', { text: torrent.name }),
         el('div', { class: 'bar', style: 'margin-top:6px;max-width:280px' },
-          el('i', { style: `width:${Math.round(torrent.progress * 100)}%` }))),
-      el('td', {}, el('span', { class: `badge ${torrent.phase === 'complete' ? 'new' : 'move'}`, text: torrent.state })),
+          el('i', { style: `width:${Math.round(torrent.progress * 100)}%` })),
+        // "error" in qBittorrent is nearly always a folder it cannot write to --
+        // the path as *it* sees it, which is what the message has to name.
+        torrent.phase === 'failed'
+          ? el('div', { class: 'bad small', style: 'margin-top:6px' },
+            `qBittorrent reports “${torrent.state}”. Its save path is ${torrent.save_path || 'unknown'}; `
+            + 'check that folder exists and is writable on qBittorrent’s side (or set the '
+            + '“marquee” category’s save path there).')
+          : null),
+      el('td', {}, el('span', { class: `badge ${torrent.phase === 'complete' ? 'new' : torrent.phase === 'failed' ? 'bad' : 'move'}`, text: torrent.state })),
       el('td', { class: 'num', text: `${Math.round(torrent.progress * 100)}%` }),
       el('td', { class: 'num nowrap', text: human(torrent.size) }),
       // The gap between these two columns is the whole point of the app.

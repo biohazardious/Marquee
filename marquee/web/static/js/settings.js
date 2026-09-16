@@ -141,7 +141,7 @@ export function render() {
         el('span', { class: 'sub', text: 'where the romset is, and where the library goes' })),
       el('div', { class: 'body' },
         folderField('rom_dir', 'ROM folder', 'the flat folder of .zip files', config.rom_dir),
-        folderField('chd_dir', 'CHD folder', 'one subfolder per machine', config.chd_dir),
+        folderField('chd_dir', 'CHD folder', 'one subfolder per machine — leave empty to use the ROM folder', config.chd_dir),
         folderField('copy_path', 'Library', 'local path, or smb://host/share/path — Test reaches it',
           config.copy_path, { testable: true }),
         el('label', { class: 'fld' },
@@ -201,17 +201,18 @@ export function render() {
           el('div', { style: 'flex:1' }, field('download_username', 'Username', null, config.download_username)),
           el('div', { style: 'flex:1' }, field('download_password', 'Password', null, config.download_password, 'password'))),
         folderField('download_dir', 'Download folder',
-          'where this app can read the client\u2019s downloads', config.download_dir),
+          'the torrent folder as THIS app sees it (its mount in this container)', config.download_dir),
         el('label', { class: 'fld' },
           el('span', {}, 'Remote path mappings',
-            el('em', { text: ' — one “remote → local” per line' })),
-          el('textarea', { id: 'remote_path_mappings', placeholder: '/downloads -> /mnt/nas/downloads' },
+            el('em', { text: ' — one “qBittorrent’s path -> this app’s path” per line' })),
+          el('textarea', { id: 'remote_path_mappings', placeholder: '/data/torrents -> /downloads' },
             config.remote_path_mappings || ''),
           el('div', { class: 'hint', text:
-            'Where downloads go is decided in qBittorrent, per category \u2014 this app '
-            + 'never dictates it. But qBittorrent reports paths as it sees them, so if it '
-            + 'runs in another container or on another host, rewrite them here or the '
-            + 'library step will find nothing.' })))),
+            'Usually not needed: the torrent folder is found by its name inside the '
+            + 'Download folder above, whatever qBittorrent calls its parent. Only when '
+            + 'that fails, write the pair: left qBittorrent’s path, right this app’s. '
+            + 'Press Test above to see where downloads land and whether this app can see '
+            + 'them.' })))),
 
     el('div', { class: 'panel' },
       el('h2', {}, 'Indexer', el('span', { class: 'sub', text: 'Pleasuredome' })),
@@ -232,7 +233,25 @@ async function runTest() {
   clear(result);
   try {
     const answer = await testClient(values());
-    result.append(el('div', { class: 'banner good', text: `✓ ${answer.message}` }));
+    result.append(el('div', { class: `banner ${answer.visible === false ? 'warn' : 'good'}`,
+      text: `${answer.visible === false ? '!' : '✓'} ${answer.message}` }));
+    if (answer.category_path) {
+      // A category pinned to a folder is the usual reason a download errors on
+      // the spot: the folder was this app's, not qBittorrent's. Offer the way out.
+      const fix = el('button', { class: 'btn sm', style: 'margin-top:8px',
+        text: `Let qBittorrent use its default folder (${answer.default_path || 'as set there'}) for the marquee category` });
+      fix.onclick = async () => {
+        fix.disabled = true;
+        try {
+          const done = await post('/api/client/category/reset', values());
+          fix.replaceWith(el('div', { class: 'hint', text: `✓ ${done.message}` }));
+        } catch (error) {
+          fix.disabled = false;
+          fix.textContent = error.message;
+        }
+      };
+      result.append(fix);
+    }
   } catch (error) {
     result.append(el('div', { class: 'banner bad', text: `✗ ${error.message}` }));
   } finally {

@@ -231,6 +231,10 @@ function healthPanel(data) {
     plan?.fits === false
       ? line('bad', 'Free space', `short by ${plan.short_human} for the next transfer`)
       : null,
+    data.app ? line(data.app.update?.newer ? 'warn' : 'good', 'Marquee',
+      data.app.update?.newer
+        ? `${data.app.version} running; ${data.app.update.latest} is out — pull the new image`
+        : `${data.app.version} (${data.app.build})`) : null,
   ];
   return el('div', { class: 'panel' },
     el('h2', {}, 'Health'),

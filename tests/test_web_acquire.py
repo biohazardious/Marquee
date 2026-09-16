@@ -827,3 +827,97 @@ class TestWhereItLands:
         part = answer["parts"][0]
         assert part["path"] == str(tmp / "MAME 0.289 ROMs (non-merged)")
         assert part["path_visible"] is True
+
+
+class TestWhereADownloadLands:
+    """qBittorrent's path and this app's path to one folder are often different, and
+    a download this app cannot see finishes and then goes nowhere. Both the client
+    Test and every fetch answer say where it lands and whether that is visible."""
+
+    def test_a_fetch_answer_carries_both_paths(self, server, xml_path, catlist_path):
+        base, app = planned_server(server, xml_path, catlist_path)
+        app.releases["data"] = [{
+            "kind": "roms", "version": "0.289", "variant": "non-merged",
+            "full_set": True, "name": "MAME 0.289 ROMs (non-merged)",
+            "infohash": "b3" + "0" * 38, "magnet": "magnet:?xt=urn:btih:" + "b3" + "0" * 38,
+            "from_version": None, "datfile": None}]
+        client = FakeClient(app.job.plan.missing_roms)
+        app.client = lambda overrides=None: client
+        answer = post(base, "/api/missing/fetch", {"dry_run": True})
+        assert answer["client_path"] == "/data/torrents/MAME 0.289 ROMs (non-merged)"
+        assert answer["path_visible"] is False, "nothing is mounted at /data/torrents here"
+        assert "path" in answer
+
+    def test_the_client_test_names_the_landing_folder(self, server, tmp_path):
+        base, app = server
+
+        class Probe:
+            def test(self):
+                return {"app_version": "v5.0", "api_version": "2.11", "save_path": "/data/torrents"}
+
+            def categories(self):
+                return {"marquee": {"name": "marquee", "savePath": "/data/torrents/marquee"}}
+
+            def status(self):
+                return []
+
+        app.client = lambda overrides=None: Probe()
+        (tmp_path / "torrents").mkdir()
+        answer = post(base, "/api/client/test", {
+            "download_client": "http://x/",
+            "remote_path_mappings": f"/data/torrents -> {tmp_path / 'torrents'}"})
+        assert answer["landing"] == "/data/torrents/marquee"
+        assert answer["local"] == str(tmp_path / "torrents" / "marquee")
+        assert answer["visible"] is True
+        assert "Visible from here" in answer["message"]
+
+        blind = post(base, "/api/client/test", {"download_client": "http://x/",
+                                                 "remote_path_mappings": ""})
+        assert blind["visible"] is False
+        assert "NOT visible" in blind["message"]
+
+
+class TestFindingTheTorrentFolderByName:
+    """qBittorrent calls it /data/torrents/MAME 0.289 ROMs (non-merged); this container
+    calls it /downloads/MAME 0.289 ROMs (non-merged). Nobody should have to type that."""
+
+    def test_locate_falls_back_to_the_name_under_the_download_folder(self, tmp_path):
+        from marquee import acquisition
+        (tmp_path / "MAME 0.289 ROMs (non-merged)").mkdir()
+        client_path = "/data/torrents/MAME 0.289 ROMs (non-merged)"
+        assert acquisition.locate(client_path, [], str(tmp_path)) == \
+            str(tmp_path / "MAME 0.289 ROMs (non-merged)")
+        assert acquisition.inferred_mapping(client_path, str(tmp_path)) == ("/data/torrents", str(tmp_path))
+        # A written mapping still wins, and nothing is invented when the name is absent.
+        assert acquisition.locate(client_path, [("/data/torrents", "/elsewhere")], str(tmp_path)) == \
+            "/elsewhere/MAME 0.289 ROMs (non-merged)"
+        assert acquisition.locate("/data/torrents/other", [], str(tmp_path)) == "/data/torrents/other"
+
+    def test_a_fetch_is_visible_once_the_folder_exists_here(self, server, xml_path, catlist_path, tmp_path):
+        # The download folder is only kept in settings.ini beside a client.
+        base, app = planned_server(server, xml_path, catlist_path,
+                                   download_client="http://x/", download_dir=str(tmp_path))
+        (tmp_path / "MAME 0.289 ROMs (non-merged)").mkdir()
+        app.releases["data"] = [{
+            "kind": "roms", "version": "0.289", "variant": "non-merged",
+            "full_set": True, "name": "MAME 0.289 ROMs (non-merged)",
+            "infohash": "b3" + "0" * 38, "magnet": "magnet:?xt=urn:btih:" + "b3" + "0" * 38,
+            "from_version": None, "datfile": None}]
+        client = FakeClient(app.job.plan.missing_roms)
+        app.client = lambda overrides=None: client
+        answer = post(base, "/api/missing/fetch", {"dry_run": True})
+        assert answer["path"] == str(tmp_path / "MAME 0.289 ROMs (non-merged)")
+        assert answer["path_visible"] is True
+
+    def test_the_category_can_be_sent_back_to_the_default_folder(self, server):
+        base, app = server
+        calls = []
+
+        class Probe:
+            def set_category_path(self, name, path=""):
+                calls.append((name, path))
+
+        app.client = lambda overrides=None: Probe()
+        answer = post(base, "/api/client/category/reset", {"download_client": "http://x/"})
+        assert calls == [("marquee", "")]
+        assert answer["ok"]

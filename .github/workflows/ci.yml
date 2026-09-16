@@ -96,6 +96,8 @@ jobs:
           push: ${{ env.PUSH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            MARQUEE_BUILD=${{ github.ref_name }}@${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Update the Docker Hub description

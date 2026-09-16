@@ -83,7 +83,7 @@ class TestLayering:
         built = configuration.load(str(tmp_path / "absent.ini"))
         assert built.allow_mature is True
         assert built.blacklist_genres == []
-        assert built.missing_paths == ["rom_dir", "chd_dir", "copy_path"]
+        assert built.missing_paths == ["rom_dir", "copy_path"]
 
     def test_overrides_win(self, settings_file):
         built = configuration.load(settings_file(), rom_dir="/elsewhere")
@@ -99,7 +99,14 @@ class TestLayering:
         assert built.allow_mature is False
 
     def test_missing_paths_lists_only_what_is_missing(self):
-        assert Config(rom_dir="/a").missing_paths == ["chd_dir", "copy_path"]
+        assert Config(rom_dir="/a").missing_paths == ["copy_path"]
+
+    def test_the_chd_folder_is_the_rom_folder_unless_said_otherwise(self):
+        """A first run used to stop on "missing chd_dir" for someone with no disks;
+        the CHD set is found inside the ROM folder the same way the ROM set is."""
+        assert Config(rom_dir="/a").chd_dir == "/a"
+        assert Config(rom_dir="/a", chd_dir="/b").chd_dir == "/b"
+        assert Config(rom_dir="/a", chd_dir="/b").with_overrides(chd_dir="").chd_dir == "/a"
 
     def test_remote_destination_is_recognised(self):
         assert Config(copy_path="smb://nas/Share").is_remote is True
@@ -279,7 +286,7 @@ class TestEverythingSurvivesASave:
         # str(None) was written out, read back as a relative path, and resolved into a
         # folder called "None" that the run then planned against.
         assert back.rom_dir is None
-        assert back.missing_paths == ["rom_dir", "chd_dir", "copy_path"]
+        assert back.missing_paths == ["rom_dir", "copy_path"]
 
     def test_a_percent_sign_does_not_take_the_file_with_it(self, tmp_path):
         """configparser interpolates by default: one % and nothing can be read."""

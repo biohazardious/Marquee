@@ -187,6 +187,7 @@ class Handler(BaseHTTPRequestHandler):
         # where everything that matters lives.
         if parsed.path == "/api/health":
             self._send_json({"status": "ok", "version": __version__,
+                             "build": self.app.about()["build"],
                              "auth": bool(self.app.token)})
             return
         if parsed.path in ("/", "/index.html"):
@@ -214,6 +215,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload["release_watch"] = self.app.release_watch()
                 payload["destination"] = self.app.destination_payload()
                 payload["catalogue"] = self.app.catalogue_payload()
+                payload["app"] = self.app.about()
                 self._send_json(payload)
                 return
             if parsed.path == "/api/machine":
@@ -321,6 +323,7 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/versions": self.app.start_versions,
                   "/api/import": self.app.import_settings,
                   "/api/client/test": self.app.test_client,
+                  "/api/client/category/reset": self.app.reset_category,
                   "/api/destination/test": self.app.test_destination,
                   "/api/releases/refresh": self.app.refresh_releases,
                   "/api/art/download": self.app.start_art,

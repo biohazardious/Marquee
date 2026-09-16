@@ -3,6 +3,11 @@
 # owns, so it has to become the host's user rather than root.
 set -e
 
+# The port inside the container. MARQUEE_PORT is the documented name; PORT is what
+# most app templates (and this project's own .env) call it, so it counts too.
+MARQUEE_PORT="${MARQUEE_PORT:-${PORT:-8585}}"
+export MARQUEE_PORT
+
 if [ "$(id -u)" = "0" ] && [ -n "$PUID" ]; then
     if ! getent group marquee >/dev/null 2>&1; then
         addgroup --gid "$PGID" marquee 2>/dev/null || true

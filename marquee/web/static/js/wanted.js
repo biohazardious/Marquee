@@ -202,6 +202,19 @@ function upgradePanel() {
     el('div', { class: 'body', id: 'upgradeBody' }));
 }
 
+/* The download will land where qBittorrent puts it. When that place is not visible
+   from here, the files arrive and the library step finds nothing -- so it is said
+   at the moment of asking, with both paths. */
+function landingNote(answer) {
+  if (answer.path_visible !== false) return null;
+  return el('div', { class: 'banner warn', style: 'margin-top:10px' },
+    `qBittorrent writes to ${answer.client_path || 'its download folder'}`,
+    answer.path && answer.path !== answer.client_path ? `, which this app looks for at ${answer.path}` : '',
+    ' — and cannot see it. Mount that folder into this container, or add a remote path '
+    + 'mapping (qBittorrent’s path -> this app’s path) in Settings → Download client. '
+    + 'The download itself is not affected.');
+}
+
 /* Asking the download client for what is missing. Two steps on purpose: the first
    says what it would cost and which release it comes from, the second commits. */
 function fetchPanel() {
@@ -225,6 +238,7 @@ function fetchPanel() {
                 `${answer.missing_from_set.length} of them are not in that set: `
                 + answer.missing_from_set.join(', ') })
             : null,
+          landingNote(answer),
           el('button', {
             class: 'btn primary', style: 'margin-top:10px', text: 'Download them',
             onclick: async (event) => {
@@ -232,10 +246,11 @@ function fetchPanel() {
               try {
                 const done = await post('/api/missing/fetch', {});
                 clear(result);
-                result.append(el('div', { class: 'banner good' },
+                append(result, el('div', { class: 'banner good' },
                   `Asked for ${count(done.selected)} files (${done.bytes_human}). `
                   + `${count(done.raised)} newly selected, `
-                  + `${count(done.already_selected)} were already. Watch Activity.`));
+                  + `${count(done.already_selected)} were already. Watch Activity.`),
+                  landingNote(done));
               } catch (error) {
                 clear(result);
                 result.append(el('div', { class: 'banner bad', text: error.message }));

@@ -1916,3 +1916,31 @@ class TestChoosingTheRelease:
         post(base, "/api/save", {"mame_version": "0.289"})
         post(base, "/api/save", {"allow_mature": True})
         assert app.current_config().mame_version == "0.289"
+
+
+class TestWhichMarqueeThisIs:
+    def test_the_state_says_the_version_and_the_build(self, server, monkeypatch):
+        base, app = server
+        monkeypatch.setenv("MARQUEE_NO_UPDATE_CHECK", "1")
+        monkeypatch.setenv("MARQUEE_BUILD", "v0.5.0@7c17217fde7bb8740f452794e1ebb0025fe8e702")
+        about = get(base, "/api/state")["app"]
+        from marquee import __version__
+        assert about["version"] == __version__
+        assert about["build"] == "v0.5.0@7c17217"
+        assert about["update"]["newer"] is False
+
+    def test_the_newest_tag_wins_and_junk_is_ignored(self):
+        from marquee.web.application import newest_version, build_label
+        assert newest_version(["v0.4.0", "v0.10.1", "v0.5.0", "nightly", "v1.0.0-rc1"]) == "0.10.1"
+        assert newest_version([]) is None
+        import os
+        os.environ.pop("MARQUEE_BUILD", None)
+        assert build_label() == "source"
+
+    def test_a_newer_tag_is_reported(self, server, monkeypatch):
+        base, app = server
+        monkeypatch.setenv("MARQUEE_NO_UPDATE_CHECK", "1")
+        app.update.update(latest="99.0.0", checked_at=1)
+        about = get(base, "/api/state")["app"]
+        assert about["update"]["newer"] is True
+        assert about["update"]["url"].endswith("/releases/tag/v99.0.0")

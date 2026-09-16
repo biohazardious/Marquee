@@ -107,6 +107,18 @@ function renderSidefoot(data) {
     row('In library', plan
       ? `${count(plan.library_machines ?? 0)} · ${plan.library_bytes_human || '0 B'}`
       : '—'));
+  // Which Marquee this is, and whether a newer one has been tagged. "latest" on
+  // Docker Hub says nothing about what is actually running; this does.
+  const about = data.app;
+  if (about) {
+    const line = el('div', { class: 'stat about', title: `build ${about.build}` },
+      el('span', { text: `Marquee ${about.version}` }),
+      about.update?.newer
+        ? el('a', { href: about.update.url, target: '_blank', rel: 'noreferrer',
+          class: 'update', text: `${about.update.latest} is out` })
+        : el('span', { class: 'dim', text: about.build }));
+    foot.append(line);
+  }
 }
 
 /* Checking the library against the release, rather than trusting the filenames.
@@ -281,13 +293,31 @@ function renderSystem() {
               el('dt', { text: 'Runs' }), el('dd', { text: count(destination.runs) }))))
       : null,
     el('div', { class: 'panel' },
-      el('h2', {}, 'About'),
-      el('div', { class: 'body muted' },
-        el('p', { style: 'margin-top:0' },
+      el('h2', {}, 'About',
+        el('span', { class: 'sub', text: data.app ? `Marquee ${data.app.version}` : '' })),
+      el('div', { class: 'body' },
+        data.app ? el('dl', { class: 'facts' },
+          el('dt', { text: 'Version' }), el('dd', { text: data.app.version }),
+          el('dt', { text: 'Build' }), el('dd', { class: 'mono', text: data.app.build }),
+          el('dt', { text: 'Newest' }),
+          el('dd', {}, data.app.update?.latest
+            ? (data.app.update.newer
+              ? el('a', { href: data.app.update.url, target: '_blank', rel: 'noreferrer',
+                text: `${data.app.update.latest} — pull the new image` })
+              : data.app.update.latest === data.app.version
+                ? `${data.app.update.latest} — this is it`
+                : `${data.app.update.latest} is the newest tagged; this build is ahead of it`)
+            : (data.app.update?.error ? `could not ask GitHub (${data.app.update.error})` : 'checking…'))) : null,
+        el('p', { class: 'muted' },
           'Marquee builds a categorised MAME library out of the Pleasuredome sets, '
-          + 'fetching only the machines you actually keep.'),
-        el('p', {}, el('a', { href: 'https://pleasuredome.github.io/pleasuredome/mame/index.html',
-          target: '_blank', rel: 'noreferrer', text: 'Pleasuredome index' }))))));
+          + 'fetching only the machines you actually keep. '),
+        el('p', { class: 'muted', style: 'margin-bottom:0' },
+          el('a', { href: 'https://github.com/biohazardious/Marquee', target: '_blank',
+            rel: 'noreferrer', text: 'Source and releases' }), ' · ',
+          el('a', { href: 'https://hub.docker.com/r/biohazardious/marquee', target: '_blank',
+            rel: 'noreferrer', text: 'Docker Hub' }), ' · ',
+          el('a', { href: 'https://pleasuredome.github.io/pleasuredome/mame/index.html',
+            target: '_blank', rel: 'noreferrer', text: 'Pleasuredome index' }))))));
 }
 
 /* ---------------- wiring ---------------- */

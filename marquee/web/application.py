@@ -9,9 +9,11 @@ import json
 import os
 import threading
 import time
+import urllib.request
 
 from .. import (acquire, acquisition, art, atomic, backends, download, fetch, indexers, manifest,
                 pipeline, sources, sync)
+from .. import __version__
 from .. import config as configuration
 from ..errors import MarqueeError
 from ..plan import human_bytes
@@ -56,6 +58,9 @@ class Application:
         # The status bar on every page asks for the queue; one answer serves all of
         # them for a few seconds rather than one qBittorrent call per tab per tick.
         self._queue_cache = {"at": 0.0, "data": None}
+        # Whether a newer Marquee has been tagged. Asked of GitHub twice a day at
+        # most; nothing is downloaded, and MARQUEE_NO_UPDATE_CHECK turns it off.
+        self.update = {"running": False, "latest": None, "error": None, "checked_at": None}
         self._read_catalogue()
 
     def current_config(self):
@@ -129,12 +134,95 @@ class Application:
             password=password)
 
     def test_client(self, body):
-        info = self.client(body or {}).test()
-        return {"ok": True,
-                "message": (f"qBittorrent {info['app_version']} "
-                            f"(Web API {info['api_version']}), "
-                            f"downloading to {info['save_path'] or 'its default folder'}"),
-                "details": info}
+        """Reach the client, and say where its downloads land -- in its own terms and
+        in this app's.
+
+        The two are often different paths to one folder (qBittorrent in one
+        container, this app in another), and a download that lands somewhere this
+        app cannot see finishes and then goes nowhere. Saying so here, before
+        anything is fetched, is the whole point of a Test button.
+        """
+        body = body or {}
+        client = self.client(body)
+        info = client.test()
+        landing = self._landing(client, info)
+        mappings_text = body.get("remote_path_mappings")
+        if mappings_text is None:
+            mappings_text = self.current_config().remote_path_mappings
+        try:
+            mappings = acquisition.parse_mappings(mappings_text)
+        except MarqueeError:
+            mappings = []
+        download_dir = body.get("download_dir")
+        if download_dir is None:
+            download_dir = self.current_config().download_dir
+        download_dir = (download_dir or "").strip() or None
+        # Where the existing Marquee torrents are found from here, by name -- which is
+        # what a fresh download will be found by too, and the reason a mapping is
+        # normally not needed at all.
+        found_by_name = None
+        try:
+            for entry in (client.status() or []):
+                if entry.get("category") != acquisition.CATEGORY:
+                    continue
+                pair = acquisition.inferred_mapping(
+                    entry.get("content_path") or entry.get("save_path"), download_dir)
+                if pair:
+                    found_by_name = pair
+                    break
+        except (MarqueeError, AttributeError):
+            pass
+        local = (acquisition.locate(landing, mappings, download_dir) if landing else None)
+        if local == landing and found_by_name and landing.startswith(found_by_name[0]):
+            local = os.path.join(found_by_name[1], landing[len(found_by_name[0]):].strip("/"))
+        visible = bool(local) and (os.path.isdir(local) or os.path.isdir(os.path.dirname(local)))
+        category_path = self._category_path(client)
+        message = (f"qBittorrent {info['app_version']} (Web API {info['api_version']}). "
+                   f"New downloads land in {landing or 'its default folder'}")
+        if category_path:
+            message += " (the marquee category's own folder)"
+        if landing and local != landing:
+            message += f", which this app sees as {local}"
+        if found_by_name:
+            message += (f". Its downloads are found here by name: qBittorrent's "
+                        f"{found_by_name[0]} is this app's {found_by_name[1]}, no mapping needed")
+        if landing:
+            message += (". Visible from here." if visible else
+                        ". NOT visible from here: mount that folder into this container, "
+                        "or add a remote path mapping for it.")
+        return {"ok": True, "message": message, "details": info,
+                "landing": landing, "local": local, "visible": visible,
+                "category_path": category_path, "default_path": info.get("save_path") or "",
+                "found_by_name": found_by_name}
+
+    @staticmethod
+    def _category_path(client):
+        try:
+            return ((client.categories() or {}).get(acquisition.CATEGORY) or {}).get("savePath") or ""
+        except MarqueeError:
+            return ""
+
+    def reset_category(self, body):
+        """Send the marquee category back to qBittorrent's default folder.
+
+        An earlier Marquee created the category with *this* container's download
+        path as its save path -- meaningless to a qBittorrent in another container,
+        and every download into it failed on the spot. One button undoes that.
+        """
+        client = self.client(body or {})
+        client.set_category_path(acquisition.CATEGORY, "")
+        return {"ok": True, "message": "The marquee category now uses qBittorrent's "
+                                       "default download folder."}
+
+    @staticmethod
+    def _landing(client, info):
+        """Where a new Marquee torrent would be saved, as qBittorrent sees it: the
+        marquee category's folder when it has one, else the client's default."""
+        try:
+            category = (client.categories() or {}).get(acquisition.CATEGORY) or {}
+        except MarqueeError:
+            category = {}
+        return category.get("savePath") or info.get("save_path") or ""
 
     def test_destination(self, body):
         """Reach the library and read its top level, before anything is planned.
@@ -171,6 +259,56 @@ class Application:
         return {"ok": True, "remote": remote, "entries": len(names), "sample": folders,
                 "message": message,
                 "writable": None if remote else os.access(copy_path, os.W_OK)}
+
+    # -- this program's own version ------------------------------------------ #
+
+    UPDATE_TTL = 12 * 60 * 60
+    UPDATE_RETRY = 60 * 60
+    TAGS_URL = "https://api.github.com/repos/biohazardious/Marquee/tags?per_page=30"
+
+    def about(self):
+        """Version, build and whether something newer is out -- for the sidebar."""
+        self._watch_updates()
+        latest = self.update["latest"]
+        return {
+            "version": __version__,
+            "build": build_label(),
+            "update": {
+                "latest": latest,
+                "newer": bool(latest and _version_key(latest) > _version_key(__version__)),
+                "url": f"https://github.com/biohazardious/Marquee/releases/tag/v{latest}"
+                       if latest else None,
+                "error": self.update["error"],
+            },
+        }
+
+    def _watch_updates(self):
+        if os.environ.get("MARQUEE_NO_UPDATE_CHECK", "").strip().lower() in ("1", "true", "yes"):
+            return
+        age = time.time() - (self.update["checked_at"] or 0)
+        due = self.update["checked_at"] is None or age > (
+            self.UPDATE_RETRY if self.update["error"] else self.UPDATE_TTL)
+        if self.update["running"] or not due:
+            return
+
+        def work():
+            try:
+                request = urllib.request.Request(
+                    self.TAGS_URL, headers={"User-Agent": f"Marquee/{__version__}",
+                                            "Accept": "application/vnd.github+json"})
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    tags = json.loads(response.read().decode("utf-8"))
+                self.update["latest"] = newest_version(
+                    entry.get("name", "") for entry in tags if isinstance(entry, dict))
+                self.update["error"] = None
+            except Exception as error:  # noqa: BLE001 - a failed check is a note, not a fault
+                self.update["error"] = f"{type(error).__name__}: {error}"
+            finally:
+                self.update["checked_at"] = time.time()
+                self.update["running"] = False
+
+        self.update["running"] = True
+        threading.Thread(target=work, daemon=True).start()
 
     def refresh_releases(self, _body=None):
         def work():
@@ -553,6 +691,8 @@ class Application:
                 "missing_from_set": part["missing_from_set"],
                 "already_in_client": not part["added_now"],
                 "shared": bool(part.get("shared")),
+                "path": part.get("path"), "client_path": part.get("client_path"),
+                "path_visible": part.get("path_visible"),
                 "selected": part.get("selected", part["files"]),
                 "raised": part.get("raised", part.get("selected", 0)),
                 "already_selected": part.get("kept_complete", 0)}
@@ -596,6 +736,16 @@ class Application:
         return {"restored": len(putting_back), "remaining": len(remaining),
                 "replan": True}
 
+    @staticmethod
+    def _client_path(client, infohash):
+        """The same place in qBittorrent's own words, for the message that says why
+        this app cannot see it."""
+        try:
+            entry = client.one(infohash) or {}
+        except MarqueeError:
+            return None
+        return entry.get("content_path") or entry.get("save_path") or None
+
     def _content_path(self, client, infohash):
         """Where the download client is putting this torrent, in our terms.
 
@@ -603,9 +753,9 @@ class Application:
         and on a fresh install nobody yet knows what the folder will be called.
         """
         try:
-            mappings = acquisition.parse_mappings(
-                self.current_config().remote_path_mappings)
-            return acquisition.torrent_root(client, infohash, mappings)
+            config = self.current_config()
+            mappings = acquisition.parse_mappings(config.remote_path_mappings)
+            return acquisition.torrent_root(client, infohash, mappings, config.download_dir)
         except (MarqueeError, KeyError, TypeError):
             return None
 
@@ -716,6 +866,7 @@ class Application:
                 "missing_from_set": chosen.missing[:20],
                 "missing_count": len(chosen.missing),
                 "path": self._content_path(client, infohash),
+                "client_path": self._client_path(client, infohash),
                 "added_now": added}
         # Whether this process can see the place the client is writing into. The
         # torrent's own folder does not exist until the download starts, so the test is
@@ -1078,6 +1229,31 @@ def _filters(given):
     whole genre.
     """
     return {key: given[key] for key in ALLOWED_FILTERS if given.get(key)}
+
+
+def newest_version(tag_names):
+    """The highest release among tag names like v0.5.0; None when there is none."""
+    best = None
+    for name in tag_names:
+        text = str(name or "").strip()
+        if not text.startswith("v"):
+            continue
+        candidate = text[1:]
+        if not all(part.isdigit() for part in candidate.split(".")):
+            continue
+        if best is None or _version_key(candidate) > _version_key(best):
+            best = candidate
+    return best
+
+
+def build_label():
+    """The build the image was made from: "master@7c17217", "v0.5.0@7c17217", or
+    "source" for a checkout run directly."""
+    raw = (os.environ.get("MARQUEE_BUILD") or "").strip()
+    if not raw or raw == "local":
+        return "local" if raw else "source"
+    ref, _, sha = raw.partition("@")
+    return f"{ref}@{sha[:7]}" if sha else ref
 
 
 def _version_key(version):

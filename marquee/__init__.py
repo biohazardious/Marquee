@@ -11,7 +11,7 @@ without any warranty; see the LICENSE file at the root of the source tree, or
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from .config import Config
 from .errors import (ConfigError, MarqueeError, SourceNotFoundError,

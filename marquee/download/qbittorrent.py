@@ -414,6 +414,10 @@ class QBittorrent:
     def categories(self):
         return self._json("torrents/categories")
 
+    def set_category_path(self, name, save_path=""):
+        """Point a category at a folder -- "" for the client's default."""
+        self._call("torrents/editCategory", {"category": name, "savePath": save_path or ""})
+
     def ensure_category(self, name, save_path=None):
         if name in self.categories():
             return

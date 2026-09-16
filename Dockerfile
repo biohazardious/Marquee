@@ -23,9 +23,13 @@ ENV PYTHONUNBUFFERED=1 \
     XDG_CACHE_HOME=/config/cache \
     MARQUEE_CONFIG=/config \
     MARQUEE_HOST=0.0.0.0 \
-    MARQUEE_PORT=8585 \
     PUID=1000 \
     PGID=1000
+
+# Which build this is, shown in the UI beside the version. CI passes the commit;
+# a checkout built by hand says "local".
+ARG MARQUEE_BUILD=local
+ENV MARQUEE_BUILD=$MARQUEE_BUILD
 
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
@@ -43,6 +47,6 @@ RUN chmod +x /entrypoint.sh
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD python -c "import urllib.request,os;\
-urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('MARQUEE_PORT','8585')+'/api/health',timeout=4)"
+urllib.request.urlopen('http://127.0.0.1:'+(os.environ.get('MARQUEE_PORT') or os.environ.get('PORT') or '8585')+'/api/health',timeout=4)"
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
