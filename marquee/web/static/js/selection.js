@@ -208,8 +208,11 @@ function changed() {
 let catalogue = null;
 let catalogueFor = null;
 
+/* Every request from this page asks for the excluded machines too. The tree lists
+   every category so that one can be put back, and "Board Game / Cards: 1" with
+   nothing inside it when opened was the alternative. */
 function slim(query) {
-  return api('/api/selection?' + new URLSearchParams(query || {}).toString());
+  return api('/api/selection?' + new URLSearchParams({ ...(query || {}), excluded: '1' }).toString());
 }
 
 /* Fetched once per plan. Re-fetching it on every toggle would be absurd, and holding
@@ -258,7 +261,7 @@ async function loadCategory(name) {
   render();
   try {
     const [found] = await Promise.all([
-      fetchMachines({ category: name, limit: ROWS, sort: 'size', dir: 'desc' }),
+      fetchMachines({ category: name, limit: ROWS, sort: 'size', dir: 'desc', excluded: '1' }),
       ready(),
     ]);
     S.machines[name] = found.rows;
@@ -312,7 +315,7 @@ export async function setFilter(key, value) {
   S.busy = true;
   render();
   try {
-    const found = await fetchMachines({ ...params(), limit: ROWS, sort: 'size', dir: 'desc' });
+    const found = await fetchMachines({ ...params(), limit: ROWS, sort: 'size', dir: 'desc', excluded: '1' });
     if (mine !== generation) return;
     S.hits = found.rows;
     S.hitTotal = found.total;

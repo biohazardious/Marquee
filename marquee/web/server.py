@@ -275,7 +275,7 @@ class Handler(BaseHTTPRequestHandler):
                     query=one("q"), status=one("status"), genre=one("genre"),
                     category=one("category"), mature=one("mature"), have=one("have"),
                     condition=one("condition"), reason=one("reason"),
-                    state=one("state")))
+                    state=one("state"), with_excluded=one("excluded") == "1"))
                 return
             if parsed.path == "/api/machines":
                 plan = self.app.job.plan
@@ -295,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
                     sort=one("sort", "size"), descending=one("dir", "desc") == "desc",
                     mature=one("mature"), have=one("have"),
                     condition=one("condition"), reason=one("reason"),
-                    state=one("state"),
+                    state=one("state"), with_excluded=one("excluded") == "1",
                     sizes=self.app.release_sizes()))
                 return
         except MarqueeError as error:

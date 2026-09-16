@@ -1747,3 +1747,38 @@ class TestTwoStartsAtOnce:
             thread.join()
         gate.set()
         assert len(started) == 1 and len(refused) == 7
+
+
+class TestAnExcludedCategoryCanStillBeOpened:
+    """The tree lists every category so one can be put back. Machines left out by a
+    genre on the exclude list used to be kept nowhere -- not in the plan, not in the
+    left-out catalogue -- so "Board Game / Cards: 1" opened onto nothing."""
+
+    @pytest.fixture
+    def planned(self, server, xml_path, catlist_path):
+        base, app = server
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path,
+                                 "blacklist_genres": ["Board Game"]})
+        wait_for(app.job, "planned", "error")
+        return base, app
+
+    def test_the_selection_page_sees_them(self, planned):
+        base, _app = planned
+        rows = get(base, "/api/machines?genre=Board+Game&excluded=1")["rows"]
+        assert [row["name"] for row in rows] == ["boardgame1"]
+        assert rows[0]["excluded"] is True
+        keys = get(base, "/api/selection?genre=Board+Game&excluded=1")["machines"]
+        assert [key["name"] for key in keys] == ["boardgame1"]
+
+    def test_the_library_does_not(self, planned):
+        base, _app = planned
+        assert get(base, "/api/machines?genre=Board+Game")["total"] == 0
+        assert get(base, "/api/selection?genre=Board+Game")["total"] == 0
+
+    def test_the_tree_count_and_the_rows_agree(self, planned):
+        base, app = planned
+        cats = {c["name"]: c for c in get(base, "/api/state")["plan"]["categories"]}
+        board = next(c for c in cats.values() if c["genre"] == "Board Game")
+        listed = get(base, f"/api/machines?category={urllib.parse.quote(board['name'])}"
+                           "&excluded=1")["total"]
+        assert listed == board["wanted"] == 1

@@ -347,17 +347,24 @@ MISSING = "missing"
 
 
 def filtered(plan, query="", status="", genre="", category="", mature="", have="",
-             condition="", reason="", state="", statuses=None):
+             condition="", reason="", state="", statuses=None, with_excluded=False):
     """The machines the page is currently showing -- on disk or not.
 
     Shared with the download action on purpose: "fetch what I am looking at" is only
     trustworthy if the list being fetched is built by the same code that built the
     list being looked at.
+
+    `with_excluded` adds the machines the exclude list leaves out. The selection tree
+    needs them -- it lists every category so one can be put back -- while the library
+    and the download button do not.
     """
     statuses = machine_status(plan) if statuses is None else statuses
     needle = query.strip().lower()
     kept = []
-    for item in plan.wanted:
+    source = plan.wanted
+    if with_excluded:
+        source = source + list(getattr(plan, "excluded_items", ()))
+    for item in source:
         if needle and needle not in item.name.lower() \
                 and needle not in item.description.lower():
             continue
@@ -389,12 +396,11 @@ def filtered(plan, query="", status="", genre="", category="", mature="", have="
 
 
 def machine_rows(plan, query="", status="", genre="", category="", offset=0, limit=200,
-                 sort="size", descending=True, excluded=(), mature="", have="",
+                 sort="size", descending=True, with_excluded=False, mature="", have="",
                  condition="", reason="", state="", sizes=None):
     """A filtered, sorted page of the plan's machines.
 
-    `excluded` names machines the page has unticked but not yet re-planned for: they are
-    still listed, marked, so unticking one does not make it vanish from under the cursor.
+    `with_excluded` lists the machines the exclude list leaves out as well, marked.
     `sizes` is what the release torrent says a machine weighs, which is the only figure
     there is for one that has not been downloaded yet.
     """
@@ -405,7 +411,7 @@ def machine_rows(plan, query="", status="", genre="", category="", offset=0, lim
     # actually returned. Building 12,000 of them to hand back 60 cost 32 ms a request.
     kept = filtered(plan, query=query, status=status, genre=genre, category=category,
                     mature=mature, have=have, condition=condition, reason=reason,
-                    state=state, statuses=statuses)
+                    state=state, statuses=statuses, with_excluded=with_excluded)
 
     weigh = lambda item: item.total_bytes or sizes.get(item.name, 0)  # noqa: E731
     keys = {"size": weigh,
@@ -818,6 +824,7 @@ def machine_row(item, state="", size=None):
         "category": item.category,
         "genre": item.genre,
         "folder": item.folder,
+        "excluded": bool(getattr(item, "excluded", False)),
         "bytes": size if size is not None else item.total_bytes,
         "bytes_human": human_bytes(size if size is not None else item.total_bytes),
         "chd": bool(item.chd_sources or item.disks),

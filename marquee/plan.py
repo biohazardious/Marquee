@@ -63,6 +63,10 @@ class PlannedItem:
     # has looked; see marquee.verify.
     state: str = ""
     state_detail: list = field(default_factory=list)
+    # Left out by a genre, category or name on the exclude list. Not wanted, but
+    # still listable: the selection tree has to be able to show what is inside a
+    # category before anyone can decide to put it back.
+    excluded: bool = False
 
     @property
     def is_clone(self):
@@ -124,6 +128,10 @@ class CopyPlan:
     # install they are the entire catalogue, and nothing can be chosen from a list of
     # eight-letter names.
     absent_items: list = field(default_factory=list)
+    # Machines the exclude list leaves out. They count towards a category's `wanted`
+    # and used to be kept nowhere at all, so the tree said "Board Game / Cards: 1" and
+    # opening it found nothing.
+    excluded_items: list = field(default_factory=list)
     missing_roms: list = field(default_factory=list)
     missing_chds: list = field(default_factory=list)
     mature_filtered: list = field(default_factory=list)
@@ -353,6 +361,8 @@ def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature):
                 leaf["bytes"] += size
 
         if info.get("excluded"):
+            item.excluded = True
+            plan.excluded_items.append(item)
             continue
 
         if item.rom_source is None:
@@ -367,6 +377,7 @@ def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature):
     plan.missing_roms.sort()
     plan.missing_chds.sort()
     plan.absent_items.sort(key=lambda item: item.name)
+    plan.excluded_items.sort(key=lambda item: item.name)
     # Weight first, because that is what a size decision is made on -- but on a set
     # nothing has been downloaded for yet every weight is zero, so the count breaks
     # the tie and the name breaks that.
