@@ -472,6 +472,7 @@ table.grid tbody tr.apart td { border-top: 1px solid var(--line); }
 .planpill.good { color: var(--good); border-color: #1f5340; background: #122620; }
 .planpill.warn { color: var(--warn); border-color: #59431a; background: #2a2212; }
 .planpill.off { color: var(--dim); }
+.leaving { color: var(--bad); margin-left: 6px; }
 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
   display: inline-block; animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }

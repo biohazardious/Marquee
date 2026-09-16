@@ -249,9 +249,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(changes_payload(
                     self.app.job.plan, kind=one("kind"), query=one("q"),
                     offset=self._number(one("offset", "0")),
-                    limit=self._number(one("limit", "200"), 200),
+                    limit=self._number(one("limit", "500"), 500),
                     sizes=self.app.release_sizes(),
-                    version=getattr(self.app.job.resolution, "xml_version", "") or ""))
+                    version=getattr(self.app.job.resolution, "xml_version", "") or "",
+                    category=one("category"), group=one("group") == "1"))
                 return
             if parsed.path == "/api/left-out":
                 self._send_json(left_out_payload(

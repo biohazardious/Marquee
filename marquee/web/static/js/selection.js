@@ -13,7 +13,7 @@ import { open as openGame } from './library.js';
 const ROWS = 500;
 
 export const S = {
-  genres: [], cats: [], machines: {}, members: {}, romCat: {}, romBytes: {},
+  genres: [], cats: [], machines: {}, members: {}, romCat: {}, romBytes: {}, romLib: {},
   adultFolder: 'ZZ-Adult',
   outGenres: new Set(), outCats: new Set(), outRoms: new Set(),
   open: new Set(), openCats: new Set(), loading: new Set(),
@@ -30,6 +30,7 @@ export const S = {
 function remember(m) {
   S.romCat[m.name] = m.category;
   if (m.bytes !== undefined) S.romBytes[m.name] = m.bytes;
+  if (m.library !== undefined) S.romLib[m.name] = m.library;
 }
 
 let onChange = () => {};
@@ -617,7 +618,24 @@ export function estimate() {
     games -= 1;
     bytes -= S.romBytes[name] || 0;
   }
-  return { games: Math.max(games, 0), bytes: Math.max(bytes, 0) };
+  return { games: Math.max(games, 0), bytes: Math.max(bytes, 0), ...leaving() };
+}
+
+/* What unticking has taken out of the library itself: games that are on the console
+   now and would be deleted -- only if asked, on the Transfer page -- once the plan is
+   rebuilt. Known once the catalogue has been read; until then nothing is claimed. */
+function leaving() {
+  let removed = 0, removedBytes = 0;
+  const totals = new Map(S.cats.map((cat) => [cat.name, cat]));
+  for (const [name, inLibrary] of Object.entries(S.romLib)) {
+    if (!inLibrary) continue;
+    const cat = totals.get(S.romCat[name]);
+    const out = S.outRoms.has(name) || (cat && catOut(cat));
+    if (!out) continue;
+    removed += 1;
+    removedBytes += S.romBytes[name] || 0;
+  }
+  return { removed, removedBytes, known: Object.keys(S.romLib).length > 0 };
 }
 
 export function adopt(plan, config) {

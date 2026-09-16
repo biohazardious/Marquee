@@ -12,6 +12,11 @@ import { api, lock, post, state } from './api.js';
 
 const V = {
   data: null, kind: '', query: '', offset: 0, error: '', busy: false,
+  // How the rows of a kind are shown: one list, or the Selection page's tree of
+  // genre -> category -> game. Remembered, because it is a way of reading, not a
+  // one-off choice.
+  view: localStorage.getItem('marquee.changes.view') || 'list',
+  open: new Set(), branches: {}, loading: new Set(),
   // Deleting is never the default, and never carried over from a run.
   remove: false,
   // The delete has to be asked for twice: once with the box, once on the button.
@@ -32,13 +37,41 @@ export async function load(kind) {
   try {
     V.data = await api('/api/changes?' + new URLSearchParams({
       kind: V.kind, q: V.query, offset: V.offset, limit: 200,
+      group: V.view === 'tree' ? '1' : '0',
     }).toString());
     V.error = '';
+    V.branches = {};
   } catch (error) {
     V.error = error.message;
   }
   V.busy = false;
   render();
+}
+
+function setView(view) {
+  V.view = view;
+  localStorage.setItem('marquee.changes.view', view);
+  V.offset = 0;
+  load();
+}
+
+/* The games of one category, fetched when its branch is opened. */
+async function loadBranch(category) {
+  const key = `${V.kind}|${category}`;
+  if (V.branches[key] || V.loading.has(key)) return;
+  V.loading.add(key);
+  try {
+    const found = await api('/api/changes?' + new URLSearchParams({
+      kind: V.kind, q: V.query, category, limit: 500,
+    }).toString());
+    V.branches[key] = found.rows;
+  } catch (error) {
+    V.branches[key] = [];
+    V.error = error.message;
+  } finally {
+    V.loading.delete(key);
+    render();
+  }
 }
 
 function pick(kind) {
@@ -183,6 +216,69 @@ function fileRow(row) {
     el('td', { class: 'num nowrap', text: row.bytes_human }));
 }
 
+/* ---------------- the tree ---------------- */
+
+const INDENT = [10, 26, 50];
+
+function treeRow(depth, label, open, onOpen, machines, bytes, extra) {
+  return pressable(el('div', {
+    class: `row ${depth === 0 ? 'genre' : 'cat'}`,
+    style: `padding-left:${INDENT[depth]}px`, onclick: onOpen,
+  },
+    el('span', { class: 'twist', text: open ? '▾' : '▸' }),
+    el('span', { class: 'name', text: label }),
+    extra || null,
+    el('span', { class: 'count', text: count(machines) }),
+    el('span', { class: 'size', text: human(bytes) })), onOpen);
+}
+
+function treeGame(row) {
+  const isFile = row.kind === 'orphan';
+  return el('div', { class: 'row game', style: `padding-left:${INDENT[2]}px` },
+    el('span', { class: 'twist' }),
+    el('span', { class: 'name' },
+      el('span', { text: row.description || row.name }),
+      el('small', { text: isFile ? row.path : row.name })),
+    el('span', { class: 'rowflex' },
+      row.chd ? el('span', { class: 'badge chd', text: 'CHD' }) : null,
+      row.state && row.state !== 'current'
+        ? el('span', { class: 'badge update', text: row.state }) : null,
+      row.from ? el('span', { class: 'muted small mono', text: `from ${row.from}` }) : null,
+      row.why && (isFile || row.kind === 'fetch')
+        ? el('span', { class: 'muted small', text: row.why }) : null),
+    el('span', { class: 'size', text: row.bytes_human }));
+}
+
+function treePanel(data) {
+  const nodes = [];
+  for (const genre of data.tree || []) {
+    const gkey = `g:${genre.name}`;
+    const gopen = V.open.has(gkey);
+    nodes.push(treeRow(0, genre.name, gopen,
+      () => { gopen ? V.open.delete(gkey) : V.open.add(gkey); render(); },
+      genre.machines, genre.bytes));
+    if (!gopen) continue;
+    for (const cat of genre.categories) {
+      const ckey = `c:${cat.name}`;
+      const copen = V.open.has(ckey);
+      nodes.push(treeRow(1, cat.label || cat.name, copen,
+        () => {
+          if (copen) V.open.delete(ckey);
+          else { V.open.add(ckey); loadBranch(cat.name); }
+          render();
+        }, cat.machines, cat.bytes));
+      if (!copen) continue;
+      const key = `${V.kind}|${cat.name}`;
+      const rows = V.branches[key];
+      if (!rows) nodes.push(el('div', { class: 'row game dim', text: 'loading…' }));
+      else rows.forEach((row) => nodes.push(treeGame(row)));
+    }
+  }
+  return nodes.length
+    ? el('div', { class: 'tree', style: 'padding:6px 8px' }, nodes)
+    : el('div', { class: 'muted', style: 'padding:12px 2px', text: 'Nothing matches.' });
+}
+
 function pager(data) {
   const shown = data.offset + data.rows.length;
   if (data.total <= data.rows.length && !data.offset) return null;
@@ -209,9 +305,18 @@ function rowsPanel(data) {
   search.onchange = () => { V.query = search.value.trim(); V.offset = 0; load(); };
 
   const draw = { orphan: fileRow, fetch: fetchRow }[data.kind] || gameRow;
-  const body = data.rows.length
-    ? el('table', { class: 'grid' }, el('tbody', {}, data.rows.map(draw)))
-    : el('div', { class: 'muted', style: 'padding:12px 2px', text: 'Nothing matches.' });
+  const tree = V.view === 'tree';
+  const body = tree
+    ? treePanel(data)
+    : data.rows.length
+      ? el('table', { class: 'grid' }, el('tbody', {}, data.rows.map(draw)))
+      : el('div', { class: 'muted', style: 'padding:12px 2px', text: 'Nothing matches.' });
+
+  const views = el('div', { class: 'seg' },
+    el('button', { class: tree ? '' : 'on', text: 'List', onclick: () => setView('list') }),
+    el('button', { class: tree ? 'on' : '', text: 'By genre', onclick: () => setView('tree') }));
+  views.children[0].prepend(icon('menu'));
+  views.children[1].prepend(icon('selection'));
 
   return el('div', { class: 'panel' },
     el('h2', {}, entry.label,
@@ -220,8 +325,9 @@ function rowsPanel(data) {
           + `${data.bytes_shown_human}` }),
       el('span', { class: 'spacer' }),
       el('span', { class: 'search' }, icon('search'), search),
+      views,
       el('button', { class: 'btn sm', text: 'Close', onclick: () => pick(data.kind) })),
-    el('div', { class: 'body tight' }, body, pager(data),
+    el('div', { class: 'body tight' }, body, tree ? null : pager(data),
       data.kind === 'fetch'
         ? el('div', { class: 'hint' },
           'This run cannot do anything with these: there is no file here to place. ',

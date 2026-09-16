@@ -545,9 +545,19 @@ function updateSelectionSummary() {
   const matches = plan && !dirty();
   // What the selection holds, not what happens to be downloaded -- on a fresh install
   // the second is zero and saying "0 games selected" under a full tree is nonsense.
-  host.textContent = matches
+  clear(host);
+  host.append(matches
     ? `${count(plan.wanted)} games · ${plan.wanted_bytes_human || plan.bytes_human} selected`
-    : `about ${count(estimate.games)} games · ${human(estimate.bytes)} — build a plan to confirm`;
+    : `about ${count(estimate.games)} games · ${human(estimate.bytes)} — build a plan to confirm`);
+  // The part that is easy to miss: unticking a game that is already on the console
+  // is asking for it to leave. Said here, where the tick was, and not only under
+  // "Delete" on the Transfer page after a rebuild.
+  if (estimate.removed) {
+    host.append(el('span', { class: 'leaving', title:
+      'These are in the library now. After a rebuild the Transfer page lists them under '
+      + 'Delete, and they go only if you tick "Also delete" there.' },
+      `· ${count(estimate.removed)} in the library · ${human(estimate.removedBytes)} to delete`));
+  }
   showSelectionSaveState();
 }
 

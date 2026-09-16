@@ -725,7 +725,7 @@ def _fetch_rows(plan, needle, sizes, needed=None):
 
 
 def changes_payload(plan, kind="", query="", offset=0, limit=ROW_LIMIT, sizes=None,
-                    version=""):
+                    version="", category="", group=False):
     """What the next Transfer will actually do, file by file and game by game.
 
     Everything needed to answer this has been worked out since the first version --
@@ -792,6 +792,16 @@ def changes_payload(plan, kind="", query="", offset=0, limit=ROW_LIMIT, sizes=No
         rows = _change_rows(plan, report, chosen, query.strip().lower(),
                             index, wanted, version)
         rows.sort(key=lambda row: (-row["bytes"], row["name"]))
+    # Every row can be placed in the same tree the Selection page shows: a game by
+    # its genre and category, an orphan by the folder it sits in -- which is the
+    # library's own genre/category layout, so the two agree.
+    for row in rows:
+        if not row.get("genre"):
+            folder = row.get("folder") or ""
+            row["genre"] = folder.split("/", 1)[0] or "(root)"
+            row["category"] = folder
+    if category:
+        rows = [row for row in rows if row.get("category") == category]
     payload["kind"] = chosen
     payload["total"] = len(rows)
     payload["files"] = sum(row["files"] for row in rows)
@@ -799,8 +809,43 @@ def changes_payload(plan, kind="", query="", offset=0, limit=ROW_LIMIT, sizes=No
     payload["bytes_shown_human"] = human_bytes(payload["bytes"])
     offset = max(0, offset)
     payload["offset"] = offset
-    payload["rows"] = rows[offset:offset + max(1, min(limit, ROW_LIMIT))]
+    if group:
+        payload["tree"] = _change_tree(rows)
+        payload["rows"] = []
+    else:
+        payload["rows"] = rows[offset:offset + max(1, min(limit, ROW_LIMIT))]
     return payload
+
+
+def _change_tree(rows):
+    """genre -> category totals for one kind, in the Selection page's shape.
+
+    A flat list of 1,144 games says what a run does; the same games under Shooter /
+    Flying Vertical say what it does *to the library*, which is what someone who
+    chose by genre wants to see. The rows themselves are fetched per category when
+    a branch is opened, so the tree costs nothing to draw.
+    """
+    genres = {}
+    for row in rows:
+        genre = genres.setdefault(row["genre"], {
+            "name": row["genre"], "machines": 0, "files": 0, "bytes": 0, "categories": {}})
+        name = row.get("category") or row["genre"]
+        leaf = genre["categories"].setdefault(name, {
+            "name": name, "label": _leaf_label(name) if "/" in name else name,
+            "machines": 0, "files": 0, "bytes": 0})
+        for bucket in (genre, leaf):
+            bucket["machines"] += 1
+            bucket["files"] += row["files"]
+            bucket["bytes"] += row["bytes"]
+    out = []
+    for genre in sorted(genres.values(), key=lambda g: (-g["bytes"], g["name"])):
+        genre["categories"] = sorted(genre["categories"].values(),
+                                     key=lambda c: (-c["bytes"], c["name"]))
+        for leaf in genre["categories"]:
+            leaf["bytes_human"] = human_bytes(leaf["bytes"])
+        genre["bytes_human"] = human_bytes(genre["bytes"])
+        out.append(genre)
+    return out
 
 def machine_keys(plan, sizes=None, **filters):
     """Just enough of every match to act on it: name, genre, category, weight.
@@ -817,10 +862,16 @@ def machine_keys(plan, sizes=None, **filters):
     """
     kept = filtered(plan, **filters)
     sizes = sizes or {}
+    # Which of them are in the library now: unticking one of those is what turns into
+    # a deletion on the Transfer page, and the tree should say so before anyone
+    # gets there.
+    statuses = machine_status(plan)
+    held = (sync.KEEP, sync.MOVE, sync.UPDATE)
     return {"total": len(kept),
             "machines": [{"name": item.name, "genre": item.genre,
                           "category": item.category,
-                          "bytes": item.total_bytes or sizes.get(item.name, 0)}
+                          "bytes": item.total_bytes or sizes.get(item.name, 0),
+                          "library": bool(item.in_library or statuses.get(item.name) in held)}
                          for item in kept]}
 
 

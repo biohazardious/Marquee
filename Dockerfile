@@ -6,7 +6,7 @@ FROM python:3.13-slim
 
 LABEL org.opencontainers.image.title="Marquee" \
       org.opencontainers.image.description="Categorise, acquire and update a MAME romset" \
-      org.opencontainers.image.source="https://github.com/biohazardious/MameParser" \
+      org.opencontainers.image.source="https://github.com/biohazardious/Marquee" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
 
 # tini reaps the process; certificates are for the GitHub and Pleasuredome fetches.

@@ -902,9 +902,22 @@ class TestSelectionMatches:
         base, _app = planned
         rows = {m["name"]: m for m in get(base, "/api/selection")["machines"]}
         entry = rows["goodgame"]
-        assert set(entry) == {"name", "genre", "category", "bytes"}
+        assert set(entry) == {"name", "genre", "category", "bytes", "library"}
         assert entry["genre"] and entry["category"]
         assert entry["bytes"] == 300
+        # Not transferred yet, so unticking it would delete nothing.
+        assert entry["library"] is False
+
+    def test_a_game_in_the_library_says_so(self, planned, xml_path, catlist_path):
+        """Unticking one of these is a deletion waiting to happen; the tree has to
+        be able to say so before the Transfer page does."""
+        base, app = planned
+        post(base, "/api/copy", {})
+        wait_for(app.job, "done", "error")
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        rows = {m["name"]: m for m in get(base, "/api/selection")["machines"]}
+        assert rows["goodgame"]["library"] is True
 
     def test_a_category_comes_back_whole(self, planned):
         """The tick rules are decided on this, so a page of it is worse than useless."""
@@ -1797,3 +1810,48 @@ class TestAnExcludedCategoryCanStillBeOpened:
         listed = get(base, f"/api/machines?category={urllib.parse.quote(board['name'])}"
                            "&excluded=1")["total"]
         assert listed == board["wanted"] == 1
+
+
+class TestTheTransferByGenre:
+    """The same rows the list shows, under the Selection page's genre -> category tree,
+    so a run can be read as what it does to the library rather than as 1,144 lines."""
+
+    @pytest.fixture
+    def planned(self, server, xml_path, catlist_path):
+        base, app = server
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        return base, app
+
+    def test_the_tree_adds_up_to_the_list(self, planned):
+        base, _app = planned
+        flat = get(base, "/api/changes?kind=new&limit=500")
+        tree = get(base, "/api/changes?kind=new&group=1")
+        assert tree["rows"] == [], "a grouped answer carries totals, not rows"
+        genres = tree["tree"]
+        assert genres, "a plan with new files has at least one genre"
+        assert sum(g["machines"] for g in genres) == flat["total"]
+        assert sum(g["bytes"] for g in genres) == flat["bytes"]
+        for genre in genres:
+            assert sum(c["machines"] for c in genre["categories"]) == genre["machines"]
+            assert all(c["label"] for c in genre["categories"])
+
+    def test_a_branch_fetches_only_its_own_games(self, planned):
+        base, _app = planned
+        tree = get(base, "/api/changes?kind=new&group=1")
+        leaf = tree["tree"][0]["categories"][0]
+        rows = get(base, "/api/changes?kind=new&category="
+                         + urllib.parse.quote(leaf["name"]))["rows"]
+        assert len(rows) == leaf["machines"]
+        assert {row["category"] for row in rows} == {leaf["name"]}
+
+    def test_orphans_are_grouped_by_the_folder_they_sit_in(self, planned, romset):
+        base, app = planned
+        stray = romset["out_dir"] / "Maze" / "Misc" / "stray.zip"
+        stray.parent.mkdir(parents=True, exist_ok=True)
+        stray.write_bytes(b"x" * 10)
+        from marquee import pipeline
+        app.job.plan.sync = pipeline.compare_destination(app.job.plan, app.job.config)
+        tree = get(base, "/api/changes?kind=orphan&group=1")["tree"]
+        assert [g["name"] for g in tree] == ["Maze"]
+        assert tree[0]["categories"][0]["name"] == "Maze/Misc"

@@ -24,9 +24,9 @@ classifiers = [
 dependencies = ["pysmb"]
 
 [project.urls]
-Homepage = "https://github.com/biohazardious/MameParser"
-Source = "https://github.com/biohazardious/MameParser"
-Issues = "https://github.com/biohazardious/MameParser/issues"
+Homepage = "https://github.com/biohazardious/Marquee"
+Source = "https://github.com/biohazardious/Marquee"
+Issues = "https://github.com/biohazardious/Marquee/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pyftpdlib>=1.5", "paramiko>=3.0"]

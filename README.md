@@ -106,6 +106,10 @@ A dark web UI with nine pages, in the order the work happens:
   acting on the whole match rather than the page of it. Dropping every imperfectly
   emulated game is 11,993 → 8,764 games and 494.9 → 322.6 GB. Only the largest 500
   games of a category are drawn, but every tick box covers all of them.
+  Unticking something that is already on the console is a deletion waiting to
+  happen, so the heading says so at once -- "· 312 in the library · 4.1 GB to
+  delete" -- rather than only under **Delete** on the Transfer page after a rebuild.
+  Nothing goes until that page's "Also delete" box is ticked.
 - **Wanted** — the games the selection asks for that are not on disk yet, grouped by
   genre and priced from the release torrent, with a button that asks the download
   client for exactly those. Also where you move the library to a newer MAME release:
@@ -204,6 +208,10 @@ each of which opens into the games and files it means:
 | **Move** | the same file, in a folder this release no longer uses — **renamed, never re-copied** |
 | **Delete** | at the destination, wanted by nothing — left alone unless you ask |
 | **Leave alone** | already correct, and not touched |
+
+Each kind can be read as one list or **by genre** -- the same genre → category →
+game tree the Selection page uses, so a run reads as what it does to the library
+("Platform: 65 games, 38 GB, most of it Run Jump") and not as 1,144 lines.
 
 Nothing is deleted unless the box is ticked, and every candidate says *why* it is one:
 *you left it out*, *not in this release*, *a disk this release does not list for it*.
