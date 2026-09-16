@@ -186,6 +186,10 @@ class LocalCopy(CopyBackend):
         source = os.path.join(self.copy_path, from_relpath.replace("/", os.sep))
         target = os.path.join(self.copy_path, to_relpath.replace("/", os.sep))
         os.makedirs(os.path.dirname(target), exist_ok=True)
+        if os.path.lexists(target):
+            # os.replace would overwrite silently -- a file the plan wanted kept.
+            raise FileExistsError(f"{to_relpath} is already there; {from_relpath} "
+                                  f"was left where it is")
         os.replace(source, target)
         self._prune(os.path.dirname(source))
 

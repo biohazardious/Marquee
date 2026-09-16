@@ -198,14 +198,25 @@ def compare(plan, existing):
     # already at the destination. Without this an existing library is reported as
     # thousands of orphans -- and, with "remove what the library no longer wants"
     # ticked, deleted and then downloaded again.
+    #
+    # A path already settled above counts as found here too. A clone shares its
+    # parent's disk on purpose: the parent's KEEP had taken the path out of
+    # `remaining`, so the clone looked for the same file by name, found an old copy
+    # in another folder, and planned to rename it onto the file that was already
+    # there -- which the console's share refused, and rightly.
+    claimed = {action.relpath for action in report.actions}
     for item in getattr(plan, "absent_items", ()):
         paths = list(item.wanted_paths())
         found = 0
         for relpath in paths:
+            if relpath in claimed:
+                found += 1
+                continue
             size = remaining.pop(relpath, None)
             if size is not None:
                 # Already exactly where it belongs: nothing to do, which is KEEP.
                 found += 1
+                claimed.add(relpath)
                 report.actions.append(Action(KEEP, relpath, None, size=size,
                                              machine=item.name))
                 continue
@@ -214,6 +225,7 @@ def compare(plan, existing):
             if elsewhere is None:
                 continue
             found += 1
+            claimed.add(relpath)
             report.actions.append(
                 Action(MOVE, relpath, None, from_relpath=elsewhere,
                        size=remaining.pop(elsewhere), machine=item.name))

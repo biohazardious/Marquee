@@ -486,3 +486,38 @@ class TestOneBadFileDoesNotTakeTheRun:
         assert summary.copied == plan.file_count - 1
         assert not (romset["out_dir"] / "Maze" / "Misc" / "goodgame.zip").exists()
         assert manifest.read(config.copy_path) is not None, "the record was still written"
+
+
+class TestACloneSharesItsParentsDisk:
+    """dlair and dlaird name the same merged disk. With the parent's copy in place and
+    an old copy of the same disk in another folder, the clone used to plan a move of
+    the old copy onto the file that was already there."""
+
+    class Item:
+        def __init__(self, name, paths):
+            self.name, self._paths, self.in_library = name, paths, False
+            self.state = ""
+
+        def wanted_paths(self):
+            return list(self._paths)
+
+    def test_a_path_the_parent_keeps_counts_as_found_for_the_clone(self):
+        parent_files = [("/src/dlair.zip", "Platform/Run Jump/dlair.zip", 10),
+                        ("/src/dlair/dlair.chd", "Platform/Run Jump/dlair/dlair.chd", 100)]
+
+        class Plan:
+            items = []
+            absent_items = [TestACloneSharesItsParentsDisk.Item(
+                "dlaird", ["Platform/Run Jump/dlaird.zip", "Platform/Run Jump/dlair/dlair.chd"])]
+
+            def files(self):
+                yield from parent_files
+
+        existing = {"Platform/Run Jump/dlair.zip": 10,
+                    "Platform/Run Jump/dlair/dlair.chd": 100,
+                    "Platform/Run Jump/dlaird.zip": 12,
+                    "Unlisted/dlair/dlair.chd": 100}
+        report = sync.compare(Plan(), existing)
+        assert report.counts[sync.MOVE] == 0, "nothing renames onto a file already there"
+        assert kinds(report)["Unlisted/dlair/dlair.chd"] == sync.ORPHAN
+        assert Plan.absent_items[0].in_library is True

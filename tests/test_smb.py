@@ -320,3 +320,14 @@ class TestProgressDuringAnUpload:
         copier.copy(str(source), "Maze", on_bytes=moved.append)
         assert sum(moved) == 300_000
         assert len(moved) >= 4, "reported in pieces, not once at the end"
+
+
+class TestARenameOntoAFileThatIsThere:
+    def test_is_refused_in_one_sentence(self):
+        conn = FakeConnection({"roms/New": {"a.chd": 5}, "roms/Old": {"a.chd": 5}})
+        copier = build("smb://u:p@nas/Share/roms", conn)
+        with pytest.raises(Exception) as error:
+            copier.move("Old/a.chd", "New/a.chd")
+        assert "already there" in str(error.value)
+        assert "SMB Message" not in str(error.value)
+        assert getattr(conn, "renamed", []) == []

@@ -18,6 +18,13 @@ from . import BackendError, CopyBackend, is_managed
 CONN_STR_RE = re.compile(r'smb://(?:([^/]*)@)?([^/:]+)(?::(\d+))?/(.+)')
 
 
+def _brief(error):
+    """pysmb's OperationFailure prints every SMB packet it saw. The first line is
+    the message; the rest is a hex dump nobody can act on."""
+    text = str(error).strip()
+    return text.splitlines()[0] if text else error.__class__.__name__
+
+
 class _Counting:
     """A file object that reports what is read from it, so an upload that pysmb
     drives in one call can still show progress."""
@@ -208,7 +215,7 @@ class RemoteCopy(CopyBackend):
         except (smb_structs.OperationFailure, smb_structs.ProtocolError,
                 socket.error) as error:
             self._delete_quietly(partial)
-            raise BackendError(f"Upload of '{remote}' failed: {error}") from error
+            raise BackendError(f"Upload of '{remote}' failed: {_brief(error)}") from error
 
     def _delete_quietly(self, remote):
         try:
@@ -285,7 +292,8 @@ class RemoteCopy(CopyBackend):
         except (smb_structs.OperationFailure, smb_structs.ProtocolError,
                 socket.error) as error:
             raise BackendError(f"Connected to {self.server}, but {self.share_name}/"
-                               f"{self.remote_path} could not be listed: {error}") from error
+                               f"{self.remote_path} could not be listed: "
+                               f"{_brief(error)}") from error
         return sorted(entry.filename for entry in entries
                       if entry.filename not in (".", ".."))
 
@@ -321,11 +329,17 @@ class RemoteCopy(CopyBackend):
     def move(self, from_relpath, to_relpath):
         target = self._absolute(to_relpath)
         self.create_remote_directory(posixpath.dirname(target))
+        # SMB will not rename onto an existing file, and the alternative -- deleting
+        # what is there first -- would destroy a file the plan wanted kept. Say so.
+        if posixpath.basename(target) in self._listing(posixpath.dirname(target)):
+            raise BackendError(f"{to_relpath} is already there; {from_relpath} was "
+                               f"left where it is")
         try:
             self.conn.rename(self.share_name, self._absolute(from_relpath), target)
         except (smb_structs.OperationFailure, smb_structs.ProtocolError,
                 socket.error) as error:
-            raise BackendError(f"Could not rename {from_relpath}: {error}") from error
+            raise BackendError(f"Could not rename {from_relpath}: "
+                               f"{_brief(error)}") from error
         self._listing_cache.clear()
 
     def delete(self, relpath):

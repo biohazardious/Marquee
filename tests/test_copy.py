@@ -489,3 +489,15 @@ class _OtherDevice:
 
     def __getattr__(self, name):
         return getattr(self._real, name)
+
+
+class TestALocalRenameNeverOverwrites:
+    def test_the_file_that_is_there_wins(self, tmp_path):
+        from marquee.backends.local import LocalCopy
+        (tmp_path / "Old").mkdir(); (tmp_path / "New").mkdir()
+        (tmp_path / "Old" / "a.chd").write_bytes(b"old")
+        (tmp_path / "New" / "a.chd").write_bytes(b"new")
+        with pytest.raises(FileExistsError):
+            LocalCopy(str(tmp_path)).move("Old/a.chd", "New/a.chd")
+        assert (tmp_path / "New" / "a.chd").read_bytes() == b"new"
+        assert (tmp_path / "Old" / "a.chd").exists()
