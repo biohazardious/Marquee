@@ -837,6 +837,14 @@ def _change_tree(rows):
             bucket["machines"] += 1
             bucket["files"] += row["files"]
             bucket["bytes"] += row["bytes"]
+            # What is inside the branch, not just how much: disks are the weight,
+            # a check result is the reason a replace is a replace, a move's origin
+            # is where the library layout changed.
+            bucket["disks"] = bucket.get("disks", 0) + (1 if row.get("chd") else 0)
+            bucket["flagged"] = bucket.get("flagged", 0) + (
+                1 if row.get("state") in ("stale", "damaged", "incomplete") else 0)
+            bucket["moved"] = bucket.get("moved", 0) + (1 if row.get("from") else 0)
+    total = sum(g["bytes"] for g in genres.values()) or 1
     out = []
     for genre in sorted(genres.values(), key=lambda g: (-g["bytes"], g["name"])):
         genre["categories"] = sorted(genre["categories"].values(),
@@ -844,6 +852,9 @@ def _change_tree(rows):
         for leaf in genre["categories"]:
             leaf["bytes_human"] = human_bytes(leaf["bytes"])
         genre["bytes_human"] = human_bytes(genre["bytes"])
+        # This genre's share of the whole kind, so "Platform 38 GB" reads as "most
+        # of this run" without arithmetic.
+        genre["share"] = round(genre["bytes"] * 100 / total)
         out.append(genre)
     return out
 

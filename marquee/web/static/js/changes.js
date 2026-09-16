@@ -220,16 +220,27 @@ function fileRow(row) {
 
 const INDENT = [10, 26, 50];
 
-function treeRow(depth, label, open, onOpen, machines, bytes, extra) {
+/* What a branch holds, in words: games and files, and whatever makes this kind what
+   it is -- disks for the weight, flagged files for a replace, origins for a move. */
+function detailOf(node, kind) {
+  const parts = [`${count(node.machines)} ${kind === 'orphan' ? 'files' : node.machines === 1 ? 'game' : 'games'}`];
+  if (kind !== 'orphan' && node.files !== node.machines) parts.push(`${count(node.files)} files`);
+  if (node.disks) parts.push(`${count(node.disks)} with CHD`);
+  if (node.flagged) parts.push(`${count(node.flagged)} flagged by the check`);
+  if (kind === 'move' && node.moved) parts.push('renamed in place');
+  if (node.share !== undefined) parts.push(`${node.share}% of this run`);
+  return parts.join(' · ');
+}
+
+function treeRow(depth, label, open, onOpen, node, kind) {
   return pressable(el('div', {
     class: `row ${depth === 0 ? 'genre' : 'cat'}`,
     style: `padding-left:${INDENT[depth]}px`, onclick: onOpen,
   },
     el('span', { class: 'twist', text: open ? '▾' : '▸' }),
     el('span', { class: 'name', text: label }),
-    extra || null,
-    el('span', { class: 'count', text: count(machines) }),
-    el('span', { class: 'size', text: human(bytes) })), onOpen);
+    el('span', { class: 'detail muted small', text: detailOf(node, kind) }),
+    el('span', { class: 'size', text: human(node.bytes) })), onOpen);
 }
 
 function treeGame(row) {
@@ -256,7 +267,7 @@ function treePanel(data) {
     const gopen = V.open.has(gkey);
     nodes.push(treeRow(0, genre.name, gopen,
       () => { gopen ? V.open.delete(gkey) : V.open.add(gkey); render(); },
-      genre.machines, genre.bytes));
+      genre, data.kind));
     if (!gopen) continue;
     for (const cat of genre.categories) {
       const ckey = `c:${cat.name}`;
@@ -264,14 +275,19 @@ function treePanel(data) {
       nodes.push(treeRow(1, cat.label || cat.name, copen,
         () => {
           if (copen) V.open.delete(ckey);
-          else { V.open.add(ckey); loadBranch(cat.name); }
+          else V.open.add(ckey);
           render();
-        }, cat.machines, cat.bytes));
+        }, cat, data.kind));
       if (!copen) continue;
       const key = `${V.kind}|${cat.name}`;
       const rows = V.branches[key];
-      if (!rows) nodes.push(el('div', { class: 'row game dim', text: 'loading…' }));
-      else rows.forEach((row) => nodes.push(treeGame(row)));
+      if (!rows) {
+        // Asked for here, not on the click: a branch left open across a reload --
+        // switching to the list and back, a new search -- used to sit on "loading…"
+        // until it was closed and opened again.
+        loadBranch(cat.name);
+        nodes.push(el('div', { class: 'row game dim', text: 'loading…' }));
+      } else rows.forEach((row) => nodes.push(treeGame(row)));
     }
   }
   return nodes.length
