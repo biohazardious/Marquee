@@ -77,7 +77,7 @@ working; clear it and the file's key is back in force.
 
 | Variable | Default | What it is |
 |---|---|---|
-| `PUID` / `PGID` | `1000` | The user the files should belong to |
+| `PUID` / `PGID` | `1000` | The user Marquee runs as. Use qBittorrent's, since they share the torrent folder. |
 | `TZ` | `Etc/UTC` | Timezone, for the log |
 | `MARQUEE_API_KEY` | *(generated)* | The key the web UI asks for |
 | `MARQUEE_PORT` (or `PORT`) | `8585` | The port inside the container. The health check follows it. |
@@ -518,6 +518,14 @@ deleted, the files are still there under the new name, and the mount is what was
 keeping them reachable.
 
 ### qBittorrent says "error" as soon as a download starts
+
+First check ownership. Marquee and qBittorrent write into the same torrent folder,
+so they should run as the same user: give Marquee the `PUID`/`PGID` qBittorrent uses
+(on TrueNAS apps that is often `568`). qBittorrent's own log (Tools → Log) says
+"Permission denied" when this is the problem, and a `chown` of the torrent dataset's
+root back to qBittorrent's user fixes an instance that has already been bitten.
+Versions before 0.5.0 took ownership of `/downloads` themselves at start-up; this
+one does not touch it.
 
 Downloads land where **qBittorrent** puts them -- its default folder, or the
 `marquee` category's folder -- and Marquee never changes that. An "error" state the

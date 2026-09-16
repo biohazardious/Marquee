@@ -17,7 +17,12 @@ if [ "$(id -u)" = "0" ] && [ -n "$PUID" ]; then
                 --no-create-home marquee 2>/dev/null || true
     fi
     mkdir -p "$XDG_CACHE_HOME" 2>/dev/null || true
-    for directory in /config "$XDG_CACHE_HOME" /downloads /library; do
+    # Only what is ours. /downloads and /library are shared with the download
+    # client and the console: taking ownership of the torrent folder's root left
+    # qBittorrent unable to create a folder in it, and every download errored on
+    # the spot with "Permission denied". Run both containers as the same PUID/PGID
+    # instead -- they write to the same files.
+    for directory in /config "$XDG_CACHE_HOME"; do
         [ -d "$directory" ] && chown "$PUID:$PGID" "$directory" 2>/dev/null || true
     done
     exec setpriv --reuid "$PUID" --regid "$PGID" --init-groups \

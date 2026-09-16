@@ -414,6 +414,37 @@ class QBittorrent:
     def categories(self):
         return self._json("torrents/categories")
 
+    def recent_errors(self):
+        """{torrent name: last warning or error qBittorrent logged about it}.
+
+        The torrent list says "error" and nothing else; the reason -- "file_open
+        ... Permission denied" -- is only in the client's log, which nobody opens.
+        """
+        try:
+            raw = self._call("log/main", {"last_known_id": -1, "normal": "false",
+                                          "info": "false", "warning": "true",
+                                          "critical": "true"})
+            entries = json.loads(raw)
+        except (QBittorrentError, ValueError):
+            return {}
+        found = {}
+        for entry in entries if isinstance(entries, list) else []:
+            message = str(entry.get("message", ""))
+            marker = 'Torrent: "'
+            start = message.find(marker)
+            if start < 0:
+                continue
+            end = message.find('"', start + len(marker))
+            if end < 0:
+                continue
+            name = message[start + len(marker):end]
+            reason = message
+            tail = message.find("Reason: ")
+            if tail >= 0:
+                reason = message[tail + len("Reason: "):].strip().rstrip(".").strip('"')
+            found[name] = reason[-200:]
+        return found
+
     def set_category_path(self, name, save_path=""):
         """Point a category at a folder -- "" for the client's default."""
         self._call("torrents/editCategory", {"category": name, "savePath": save_path or ""})

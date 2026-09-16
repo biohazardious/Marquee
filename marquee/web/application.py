@@ -925,12 +925,20 @@ class Application:
         if cached["data"] is not None and time.time() - cached["at"] < 3:
             return cached["data"]
         try:
-            entries = self.client().status()
+            client = self.client()
+            entries = client.status()
         except MarqueeError as error:
             payload = {"configured": True, "error": str(error), "torrents": []}
         else:
             mine = [entry for entry in entries
                     if entry["category"] == acquisition.CATEGORY]
+            if any(e["phase"] == "failed" for e in mine):
+                # Only when something has failed: the reason lives in the client's
+                # log, and reading it is one more request.
+                reasons = getattr(client, "recent_errors", lambda: {})() or {}
+                for entry in mine:
+                    if entry["phase"] == "failed":
+                        entry["error_message"] = reasons.get(entry["name"])
             left = sum(max(e["size"] - e["downloaded"], 0) for e in mine)
             speed = sum(e["speed"] for e in mine)
             payload = {

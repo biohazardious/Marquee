@@ -147,9 +147,13 @@ function renderQueue() {
         // the path as *it* sees it, which is what the message has to name.
         torrent.phase === 'failed'
           ? el('div', { class: 'bad small', style: 'margin-top:6px' },
-            `qBittorrent reports “${torrent.state}”. Its save path is ${torrent.save_path || 'unknown'}; `
-            + 'check that folder exists and is writable on qBittorrent’s side (or set the '
-            + '“marquee” category’s save path there).')
+            `qBittorrent reports “${torrent.state}”`
+            + (torrent.error_message ? `: ${torrent.error_message}` : '')
+            + `. Its save path is ${torrent.save_path || 'unknown'}. `
+            + ((torrent.error_message || '').toLowerCase().includes('permission denied')
+              ? 'That is ownership: qBittorrent cannot write there. Run Marquee with '
+                + 'qBittorrent’s PUID/PGID and give the torrent folder back to that user.'
+              : 'Check that folder exists and is writable on qBittorrent’s side.'))
           : null),
       el('td', {}, el('span', { class: `badge ${torrent.phase === 'complete' ? 'new' : torrent.phase === 'failed' ? 'bad' : 'move'}`, text: torrent.state })),
       el('td', { class: 'num', text: `${Math.round(torrent.progress * 100)}%` }),

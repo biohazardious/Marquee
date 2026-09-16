@@ -921,3 +921,41 @@ class TestFindingTheTorrentFolderByName:
         answer = post(base, "/api/client/category/reset", {"download_client": "http://x/"})
         assert calls == [("marquee", "")]
         assert answer["ok"]
+
+
+class TestWhyATorrentFailed:
+    def test_the_reason_from_the_log_rides_on_the_queue_row(self, server):
+        base, app = server
+        post(base, "/api/save", {"download_client": "http://x/"})
+
+        class Probe:
+            def status(self):
+                return [{"hash": "b3" * 20, "name": "MAME 0.289 ROMs (non-merged)",
+                         "state": "error", "phase": "failed", "progress": 0.0,
+                         "downloaded": 0, "size": 10, "total_size": 10, "speed": 0,
+                         "eta": 8640000, "save_path": "/downloads",
+                         "content_path": "/downloads/MAME 0.289 ROMs (non-merged)",
+                         "category": "marquee", "seeds": 0, "peers": 0}]
+
+            def recent_errors(self):
+                return {"MAME 0.289 ROMs (non-merged)":
+                        "MAME 0.289 ROMs (non-merged) file_open (/downloads/x.zip) error: Permission denied"}
+
+        app.client = lambda overrides=None: Probe()
+        app._queue_cache = {"at": 0.0, "data": None}
+        row = get(base, "/api/queue")["torrents"][0]
+        assert row["phase"] == "failed"
+        assert "Permission denied" in row["error_message"]
+
+    def test_the_log_is_parsed_into_names_and_reasons(self):
+        from marquee.download.qbittorrent import QBittorrent
+        import json as _json
+        client = QBittorrent.__new__(QBittorrent)
+        client._call = lambda path, data=None, files=None: _json.dumps([
+            {"message": 'File error alert. Torrent: "A". File: "/x". Reason: "A file_open (/x) error: Permission denied"'},
+            {"message": 'Failed to remove partfile. Torrent: "B". Reason: "Permission denied".'},
+            {"message": "Something unrelated"}])
+        found = client.recent_errors()
+        assert found["A"].endswith("Permission denied")
+        assert found["B"] == "Permission denied"
+        assert len(found) == 2
