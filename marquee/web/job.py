@@ -303,6 +303,7 @@ class Job:
                 "catlist_version": resolution.catlist_version,
                 "rom_dir": resolution.rom_dir,
                 "chd_dir": resolution.chd_dir,
+                "chd_set_found": getattr(resolution, "chd_set_found", None),
                 "machines_read": resolution.machine_count,
                 "filtered": [
                     {"reason": reason, "label": label,
@@ -931,6 +932,7 @@ def machine_row(item, state="", size=None):
         "display": (item.display or {}).get("type", ""),
         "refresh": (item.display or {}).get("refresh", 0),
         "missing_disks": item.missing_disks,
+        "disks_to_fetch": item.disks_to_fetch,
         "driver_status": item.driver_status,
         "reason": item.reason,
         # What checking it against the release found, and what was wrong.
@@ -1005,7 +1007,7 @@ def missing_rows(plan, records=None, limit=400, priced=False):
         return {"total": 0, "bytes": 0, "genres": [], "rows": []}
 
     sizes = records or {}
-    described = {entry["name"]: entry for entry in plan.absent}
+    described = {item.name: item for item in plan.wanted}
     # What is nowhere, not what is merely absent from the source folder: a machine
     # already in the library is not something to go and fetch.
     wanted = set(plan.needed)
@@ -1014,20 +1016,23 @@ def missing_rows(plan, records=None, limit=400, priced=False):
     total_bytes = 0
 
     for name in sorted(wanted):
-        record = described.get(name) or {}
+        item = described.get(name)
         size = sizes.get(name) or 0
         total_bytes += size
-        genre = record.get("genre") or "Unlisted"
+        genre = (item.genre if item else "") or "Unlisted"
         entry = genres.setdefault(genre, {"name": genre, "machines": 0, "bytes": 0})
         entry["machines"] += 1
         entry["bytes"] += size
         if len(rows) < limit:
             rows.append({"name": name,
-                         "description": record.get("description") or name,
+                         "description": (item.description if item else "") or name,
                          "genre": genre,
-                         "category": record.get("category") or "",
+                         "category": (item.category if item else "") or "",
                          "bytes": size,
-                         "bytes_human": human_bytes(size) if size else ""})
+                         "bytes_human": human_bytes(size) if size else "",
+                         # Which half is wanted: the zip, the disks, or both.
+                         "zip": bool(item.rom_to_fetch) if item else True,
+                         "disks": list(item.disks_to_fetch) if item else []})
 
     for entry in genres.values():
         entry["bytes_human"] = human_bytes(entry["bytes"])
@@ -1040,7 +1045,7 @@ def missing_rows(plan, records=None, limit=400, priced=False):
         "priced": priced,
         "bytes": total_bytes,
         "bytes_human": human_bytes(total_bytes),
-        "disks": sorted(plan.missing_chds),
+        "disks": plan.disks_to_fetch,
         "genres": sorted(genres.values(), key=lambda entry: -entry["bytes"]),
         "rows": rows,
     }
@@ -1098,6 +1103,8 @@ def describe(plan, config, cache=None, sizes=None):
         "states": {state: plan.checked[state] for state in verify.STATES
                    if (plan.checked or {}).get(state)},
         "missing_chds": len(plan.missing_chds),
+        # Neither in the source folder nor in the library: what a download brings.
+        "disks_to_fetch": len(plan.disks_to_fetch),
         "missing_examples": plan.needed[:12],
         # In the source folder but not finished: a placeholder the torrent client
         # allocated, or a download still on its way. Not downloaded, and said so.

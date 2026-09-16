@@ -673,7 +673,11 @@ class Application:
         # Either what the library is missing, or what an upgrade would need.
         machines = (body or {}).get("machines")
         if machines is None:
-            machines = plan.needed
+            # This release carries zips; a machine on the list for its disk alone is
+            # the Library page's Download button's business, not this torrent's.
+            by_name = {item.name: item for item in plan.wanted}
+            machines = [name for name in plan.needed
+                        if name not in by_name or by_name[name].rom_to_fetch]
         if not machines:
             raise MarqueeError("Nothing to fetch.")
 
@@ -815,9 +819,12 @@ class Application:
         # The same rule as the Transfer page's "Fetch first": a copy the check found
         # stale or damaged is in the library and still needs fetching.
         needed = set(plan.needed)
-        rom_names = [item.name for item in chosen if item.name in needed]
+        rom_names = [item.name for item in chosen
+                     if item.name in needed and item.rom_to_fetch]
+        # Disks the library does not have either: 199 of 311 "missing" disks were
+        # sitting in the library, and fetching them again was 120 GB for nothing.
         disks = [(item.name, item.cloneof or item.chd_name, disk)
-                 for item in chosen for disk in item.missing_disks]
+                 for item in chosen for disk in item.disks_to_fetch]
 
         if not rom_names and not disks:
             return {"nothing": True, "chosen": len(chosen),

@@ -226,6 +226,11 @@ def _holds_disks(directory, limit=40):
     return False
 
 
+def holds_disks(directory):
+    """Whether a folder is a CHD set: subfolders with .chd files in them."""
+    return bool(directory) and os.path.isdir(directory) and _holds_disks(directory)
+
+
 FOLDER_VERSION_RE = re.compile(r"\bMAME\s+(0\.\d{2,3})\b", re.IGNORECASE)
 
 
@@ -243,7 +248,7 @@ def version_in_path(path):
     return None
 
 
-def locate_set(directory, kind="roms"):
+def locate_set(directory, kind="roms", version=None):
     """The folder that actually holds the set, one level down if that is where it is.
 
     A download client saves a torrent into a folder named after it, so the folder
@@ -251,6 +256,15 @@ def locate_set(directory, kind="roms"):
     of the set rather than the set. Descending to the subfolder that holds the files
     is what was meant, and is the difference between a working first run and a plan
     that reports all 44,166 machines missing.
+
+    One level, on purpose. A download folder can hold a hand-made backup of the full
+    set further down ("/downloads/mame/MAME 0.288 CHDs (merged)"), and a plan that
+    quietly reads from it ties the library to something Marquee does not manage.
+
+    With `version`, a folder named for that release ("MAME 0.289 ROMs (non-merged)")
+    is preferred over one named for another, and either over the fullest folder: an
+    upgrade's download folder holds the release being upgraded from as well as the
+    one being upgraded to, and the fuller one is the old one.
 
     Returns the path unchanged when it already holds the set, or when no subfolder
     obviously does.
@@ -266,15 +280,23 @@ def locate_set(directory, kind="roms"):
             return directory
         measure = lambda path: 1 if _holds_disks(path) else 0  # noqa: E731
 
-    best, score = None, 0
+    best, best_key = None, None
     try:
         with os.scandir(directory) as entries:
             for entry in entries:
-                if not entry.is_dir():
+                if entry.name.startswith(".") or not entry.is_dir():
                     continue
                 found = measure(entry.path)
-                if found > score:
-                    best, score = entry.path, found
+                if not found:
+                    continue
+                named = version_in_path(entry.name)
+                if not version or named is None:
+                    rank = 1
+                else:
+                    rank = 2 if same_version(named, version) else 0
+                key = (rank, found)
+                if best_key is None or key > best_key:
+                    best, best_key = entry.path, key
     except OSError:
         return directory
     return best or directory

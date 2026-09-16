@@ -301,6 +301,80 @@ class TestAnExistingLibraryIsCredited:
         assert report.counts[sync.ORPHAN] == 1
 
 
+class TestHalfOfAMachineInTheSourceFolder:
+    """A torrent narrowed to what was missing holds a machine's disk and not its zip,
+    or the other way round. The half that is not in the source folder used to go
+    unlooked-for: the correct file in the library was an orphan -- planned for
+    deletion -- and the machine was listed as something to download, priced at the
+    whole of it. 190 games and 111 GB on the library this was found on."""
+
+    def build(self, categorised, config, romset, remove):
+        for path in remove:
+            path.unlink()
+        return planning.build(categorised, str(romset["rom_dir"]), str(romset["chd_dir"]),
+                              catalog.folder_namer(config), config.allow_mature)
+
+    def test_a_zip_only_in_the_library_is_kept_not_orphaned(self, categorised, config,
+                                                            romset):
+        built = self.build(categorised, config, romset, [romset["rom_dir"] / "twodisk.zip"])
+        item = next(one for one in built.items if one.name == "twodisk")
+        assert item.rom_source is None and item.chd_sources
+        zip_path = f"{item.folder}/twodisk.zip"
+        report = sync.compare(built, {zip_path: 100})
+        assert kinds(report)[zip_path] == sync.KEEP
+        assert report.counts.get(sync.ORPHAN, 0) == 0
+        assert item.settled is True
+        assert item.in_library is False           # the disk still has to be copied
+        assert "twodisk" not in built.needed       # nothing a download would add
+
+    def test_a_disk_only_in_the_library_is_kept_not_orphaned(self, categorised, config,
+                                                             romset):
+        built = self.build(categorised, config, romset,
+                           [romset["chd_dir"] / "twodisk" / "ok.chd"])
+        item = next(one for one in built.items if one.name == "twodisk")
+        assert item.rom_source and not item.chd_sources
+        disk_path = f"{item.folder}/twodisk/ok.chd"
+        report = sync.compare(built, {disk_path: 600})
+        assert kinds(report)[disk_path] == sync.KEEP
+        assert report.counts.get(sync.ORPHAN, 0) == 0
+
+    def test_a_zip_nowhere_is_still_wanted(self, categorised, config, romset):
+        built = self.build(categorised, config, romset, [romset["rom_dir"] / "twodisk.zip"])
+        item = next(one for one in built.items if one.name == "twodisk")
+        sync.compare(built, {})
+        assert item.settled is False
+        assert "twodisk" in built.needed
+
+    def test_a_disk_nowhere_makes_the_machine_wanted(self, categorised, config, romset):
+        """The zip is in the source folder, the disk is not, and the library has
+        neither: that is a download, and it never used to be asked for."""
+        built = self.build(categorised, config, romset,
+                           [romset["chd_dir"] / "twodisk" / "ok.chd"])
+        item = next(one for one in built.items if one.name == "twodisk")
+        assert item.rom_source and item.missing_disks == ["ok"]
+        assert "twodisk" in built.needed                 # before any comparison
+        sync.compare(built, {})
+        assert item.rom_to_fetch is False and item.disks_to_fetch == ["ok"]
+        assert "twodisk" in built.needed
+        assert built.disks_to_fetch == ["ok"]
+
+    def test_a_disk_in_the_library_is_not_fetched(self, categorised, config, romset):
+        built = self.build(categorised, config, romset,
+                           [romset["chd_dir"] / "twodisk" / "ok.chd"])
+        item = next(one for one in built.items if one.name == "twodisk")
+        sync.compare(built, {f"{item.folder}/twodisk/ok.chd": 600})
+        assert item.disks_to_fetch == []
+        assert "twodisk" not in built.needed
+        assert built.disks_to_fetch == []
+
+    def test_a_zip_elsewhere_in_the_library_is_moved(self, categorised, config, romset):
+        built = self.build(categorised, config, romset, [romset["rom_dir"] / "twodisk.zip"])
+        item = next(one for one in built.items if one.name == "twodisk")
+        report = sync.compare(built, {"Old/twodisk.zip": 100})
+        assert kinds(report)[f"{item.folder}/twodisk.zip"] == sync.MOVE
+        assert item.settled is True
+
+
 class TestWhatTheCheckFound:
     """A size comparison cannot see a redump.
 

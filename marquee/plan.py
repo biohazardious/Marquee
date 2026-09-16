@@ -59,6 +59,13 @@ class PlannedItem:
     # Its files are already at the destination, even though the source folder has none
     # of them. Filled in by sync.compare; see wanted_paths.
     in_library: bool = False
+    # Every wanted file accounted for -- in the library already, or in the source
+    # folder ready to be copied. Set by marquee.sync; False until something compared.
+    settled: bool = False
+    compared: bool = False
+    # The wanted paths that are neither in the library nor in the source folder:
+    # what a download would have to bring. Meaningful once `compared`.
+    unsettled: list = field(default_factory=list)
     # What checking the file against the release actually found. Empty until something
     # has looked; see marquee.verify.
     state: str = ""
@@ -110,6 +117,28 @@ class PlannedItem:
         holder = self.chd_name or self.name
         for disk in self.disks:
             yield f"{self.folder}/{holder}/{disk}.chd"
+
+    @property
+    def rom_to_fetch(self):
+        """Whether the zip has to come from a download: not in the source folder, and
+        -- once the library has been looked at -- not there either."""
+        if self.compared:
+            return f"{self.folder}/{self.name}.zip" in self.unsettled
+        return self.rom_source is None
+
+    @property
+    def disks_to_fetch(self):
+        """The disks a download would have to bring, by name.
+
+        `missing_disks` only knows the source folder; a disk already sitting in the
+        library is not something to go and fetch, and 199 of 311 were, on the library
+        this was found on.
+        """
+        if not self.compared:
+            return list(self.missing_disks)
+        unsettled = set(self.unsettled)
+        paths = list(self.wanted_paths())[1:]
+        return [disk for disk, relpath in zip(self.disks, paths) if relpath in unsettled]
 
     def files(self):
         """(source path, destination path relative to the copy root, size) per file.
@@ -178,12 +207,20 @@ class CopyPlan:
         """
         out = []
         for item in self.wanted:
-            if item.rom_source:
-                continue                       # the source folder already has it
-            if item.in_library and item.state not in (verify.STALE, verify.DAMAGED):
-                continue                       # the library has it, and nothing says it is wrong
-            out.append(item.name)
+            if item.state in (verify.STALE, verify.DAMAGED):
+                out.append(item.name)          # there, but not what the release says
+                continue
+            # A machine is not downloaded until every file it needs is somewhere: a
+            # zip in the source folder with its disk nowhere used to count as here,
+            # and the disk was never asked for.
+            if item.rom_to_fetch or item.disks_to_fetch:
+                out.append(item.name)
         return sorted(out)
+
+    @property
+    def disks_to_fetch(self):
+        """Every disk a download would have to bring, once each."""
+        return sorted({disk for item in self.wanted for disk in item.disks_to_fetch})
 
     @property
     def library_items(self):

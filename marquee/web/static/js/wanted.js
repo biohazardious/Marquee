@@ -53,7 +53,7 @@ export function render() {
   host.append(el('div', { class: 'cards' },
     stat('Missing games', count(data.total)),
     stat('Download size', sizeLabel(data), sizeNote(data)),
-    stat('Missing disks', count((data.disks || []).length))));
+    stat('Disks to fetch', count((data.disks || []).length))));
 
   host.append(upgradePanel());
   host.append(fetchPanel());
@@ -217,6 +217,11 @@ function landingNote(answer) {
 
 /* Asking the download client for what is missing. Two steps on purpose: the first
    says what it would cost and which release it comes from, the second commits. */
+/* One quote for everything the selection wants and has not got: zips from the ROM
+   set, disks from the CHD set. It goes through /api/download with no filter -- the
+   same road as the Library page's Download button -- because the older
+   /api/missing/fetch only knew about zips, and a library short of 112 disks showed
+   "nothing to fetch" for as long as every zip was accounted for. */
 function fetchPanel() {
   const result = el('div', { id: 'fetchResult' });
 
@@ -226,31 +231,42 @@ function fetchPanel() {
       clear(result);
       result.append(el('div', { class: 'muted', text: 'Asking the download client…' }));
       try {
-        const answer = await post('/api/missing/fetch', { dry_run: true });
+        const answer = await post('/api/download', { filters: {}, dry_run: true });
         clear(result);
+        if (answer.nothing) {
+          result.append(el('div', { class: 'banner good', text: answer.message }));
+          return;
+        }
+        const parts = answer.parts || [];
         append(result,
           el('div', { class: 'banner info' },
-            `${count(answer.files)} files from ${answer.release} — `
-            + `${answer.bytes_human} over the wire.`
-            + (answer.already_in_client ? ' The torrent is already in your client.' : '')),
-          answer.missing_from_set.length
-            ? el('div', { class: 'hint', text:
-                `${answer.missing_from_set.length} of them are not in that set: `
-                + answer.missing_from_set.join(', ') })
-            : null,
-          landingNote(answer),
+            `${answer.bytes_human} over the wire: `
+            + `${count(answer.machines)} ROM${answer.machines === 1 ? '' : 's'}`
+            + (answer.disks ? ` and ${count(answer.disks)} disk${answer.disks === 1 ? '' : 's'}` : '')
+            + ` — the published sets total ${answer.set_bytes_human}.`),
+          el('table', { class: 'grid', style: 'margin:12px 0' },
+            el('tbody', {}, parts.map((part) => el('tr', { style: 'cursor:default' },
+              el('td', {}, el('b', { text: part.kind === 'chds' ? 'Disks' : 'ROMs' }),
+                el('small', { class: 'dim', text: part.release || '' })),
+              el('td', { class: 'num nowrap', text: part.error ? '—' : `${count(part.files)} files` }),
+              el('td', { class: 'num nowrap', text: part.error ? '' : part.bytes_human }))))),
+          ...parts.filter((part) => part.missing_count).map((part) => el('div', { class: 'hint', text:
+            `${count(part.missing_count)} not in ${part.release}: `
+            + (part.missing_from_set || []).join(', ')
+            + (part.kind === 'chds' ? ' — the CHD set trails the ROM set by a release or two.' : '') })),
+          ...parts.filter((part) => part.error).map((part) => el('div', { class: 'banner warn', text: part.error })),
+          ...parts.filter((part) => !part.error).map((part) => landingNote(part)),
           el('button', {
             class: 'btn primary', style: 'margin-top:10px', text: 'Download them',
             onclick: async (event) => {
               event.target.disabled = true;
               try {
-                const done = await post('/api/missing/fetch', {});
+                const done = await post('/api/download', { filters: {} });
                 clear(result);
                 append(result, el('div', { class: 'banner good' },
-                  `Asked for ${count(done.selected)} files (${done.bytes_human}). `
-                  + `${count(done.raised)} newly selected, `
-                  + `${count(done.already_selected)} were already. Watch Activity.`),
-                  landingNote(done));
+                  `Queued — ${done.bytes_human} across ${(done.parts || []).length} torrent(s). `
+                  + 'Watch Activity; when it has finished, build a plan and transfer.'),
+                  ...(done.parts || []).filter((part) => !part.error).map((part) => landingNote(part)));
               } catch (error) {
                 clear(result);
                 result.append(el('div', { class: 'banner bad', text: error.message }));
@@ -269,9 +285,9 @@ function fetchPanel() {
       el('span', { class: 'sub', text: 'through your download client' })),
     el('div', { class: 'body' },
       el('p', { class: 'muted', style: 'margin-top:0' },
-        'Only the missing files are selected in the release torrent. Files you '
-        + 'already have are never deselected, so anything you are seeding keeps '
-        + 'seeding.'),
+        'Only the missing files are selected in the release torrents — zips from the '
+        + 'ROM set, disks from the CHD set. Files you already have are never '
+        + 'deselected, so anything you are seeding keeps seeding.'),
       check,
       result));
 }
@@ -330,6 +346,16 @@ function genrePanel() {
           el('td', { class: 'num nowrap', text: genre.bytes_human || '-' })))))));
 }
 
+/* Which half of the game is wanted. A zip already in the library whose disk is not
+   is a common case -- the zip came with a ROM set, the disk never did -- and a row
+   that just says the name reads as if the whole game were missing. */
+function partsOf(row) {
+  const disks = row.disks || [];
+  if (!disks.length) return '';
+  const what = disks.length === 1 ? 'disk ' + disks[0] : `${disks.length} disks`;
+  return row.zip === false ? ` · ${what} only` : ` · + ${what}`;
+}
+
 function listPanel() {
   const rows = expanded ? data.rows : data.rows.slice(0, 25);
   return el('div', { class: 'panel' },
@@ -348,7 +374,7 @@ function listPanel() {
         el('tbody', {}, rows.map((row) => el('tr', { style: 'cursor:default' },
           el('td', { class: 'title-cell' },
             el('b', { text: row.description }),
-            el('small', { text: row.name })),
+            el('small', { text: row.name + partsOf(row) })),
           el('td', { class: 'muted', text: row.category || row.genre }),
           el('td', { class: 'num nowrap', text: row.bytes_human || '-' })))))));
 }

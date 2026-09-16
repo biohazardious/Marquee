@@ -517,6 +517,22 @@ It is worth knowing which way round it went: if the old folder was renamed rathe
 deleted, the files are still there under the new name, and the mount is what was
 keeping them reachable.
 
+### The library is lighter than the selection says, and the Wanted page shows nothing
+
+The selection wants CHDs and none have been fetched. Before 0.5.1 the Wanted page
+only priced zips, so with every zip accounted for it said *nothing to fetch* while
+hundreds of disks were missing, and the library sat a hundred gigabytes short. The
+Overview's Health panel now says so directly: *CHD folder — no CHD set under
+/downloads yet — N wanted disks are neither there nor in the library*, and **What would
+it cost?** on the Wanted page quotes the disks from the CHD set alongside the zips from
+the ROM set. Disks already in the library are not fetched again.
+
+Marquee reads the ROM and CHD sets from the folders in Settings, or from a torrent
+folder one level below them — never deeper. A backup of the full set kept further
+down (`/downloads/mame/…`) is left alone on purpose: a plan that read from it would tie
+the library to a folder Marquee does not manage. Point the CHD folder at such a set
+explicitly if that is what you want.
+
 ### qBittorrent says "error" as soon as a download starts
 
 First check ownership. Marquee and qBittorrent write into the same torrent folder,

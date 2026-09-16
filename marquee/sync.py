@@ -204,19 +204,28 @@ def compare(plan, existing):
     # `remaining`, so the clone looked for the same file by name, found an old copy
     # in another folder, and planned to rename it onto the file that was already
     # there -- which the console's share refused, and rightly.
+    #
+    # `items` are looked at as well as `absent_items`: a machine whose disk is in the
+    # source folder but whose zip is not (a torrent narrowed to what was missing,
+    # with the zip long since placed) is "here", so its zip never went through
+    # plan.files() -- and the correct zip in the library was an orphan, planned for
+    # deletion, while the same machine was listed as something to download.
     claimed = {action.relpath for action in report.actions}
-    for item in getattr(plan, "absent_items", ()):
+    present = {action.relpath for action in report.actions
+               if action.kind in (KEEP, MOVE)}
+    for item in list(getattr(plan, "items", ())) + list(getattr(plan, "absent_items", ())):
         paths = list(item.wanted_paths())
         found = 0
         for relpath in paths:
             if relpath in claimed:
-                found += 1
+                found += relpath in present
                 continue
             size = remaining.pop(relpath, None)
             if size is not None:
                 # Already exactly where it belongs: nothing to do, which is KEEP.
                 found += 1
                 claimed.add(relpath)
+                present.add(relpath)
                 report.actions.append(Action(KEEP, relpath, None, size=size,
                                              machine=item.name))
                 continue
@@ -226,10 +235,16 @@ def compare(plan, existing):
                 continue
             found += 1
             claimed.add(relpath)
+            present.add(relpath)
             report.actions.append(
                 Action(MOVE, relpath, None, from_relpath=elsewhere,
                        size=remaining.pop(elsewhere), machine=item.name))
         item.in_library = bool(paths) and found == len(paths)
+        # Settled: every file is either already in the library or on its way from the
+        # source folder. What is left over is what a download would have to supply.
+        item.compared = True
+        item.unsettled = [relpath for relpath in paths if relpath not in claimed]
+        item.settled = bool(paths) and not item.unsettled
 
     for relpath, size in remaining.items():
         report.actions.append(Action(ORPHAN, relpath, size=size))

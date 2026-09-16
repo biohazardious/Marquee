@@ -60,6 +60,8 @@ class Resolution:
     # point: a torrent lands in a folder named after itself.
     rom_dir: str = None
     chd_dir: str = None
+    # None until a plan wanted a disk; then whether the CHD folder holds any.
+    chd_set_found: bool = None
     xml_file: str = None
     xml_version: str = None
     catlist_file: str = None
@@ -142,6 +144,12 @@ def resolve_mame_xml(config, options, reporter):
             reporter.info(f"Using MAME XML: {found}")
             return found
         if options.offline:
+            # What an earlier online run fetched is on disk too, in the cache: an
+            # offline plan for a release planned before has no reason to stop.
+            cached = fetch.cached_xml(version)
+            if os.path.isfile(cached) and os.path.getsize(cached) > 0:
+                reporter.info(f"Using MAME XML: {cached}")
+                return cached
             raise SourceNotFoundError(
                 f"MAME {version} was chosen but no XML for it is on disk and "
                 f"--offline was given. Pass --xml PATH.")
@@ -296,8 +304,8 @@ def build_plan(config, options=None, reporter=None):
     if config.parents_only:
         mame_list = catalog.collapse_clones(mame_list, reporter)
 
-    rom_dir = sources.locate_set(config.rom_dir, "roms")
-    chd_dir = sources.locate_set(config.chd_dir, "chds")
+    rom_dir = sources.locate_set(config.rom_dir, "roms", version=resolution.xml_version)
+    chd_dir = sources.locate_set(config.chd_dir, "chds", version=resolution.xml_version)
     for label, chosen, given in (("ROM", rom_dir, config.rom_dir),
                                  ("CHD", chd_dir, config.chd_dir)):
         if chosen != given:
@@ -315,6 +323,17 @@ def build_plan(config, options=None, reporter=None):
         # Declined, not deferred. `execute` used to compare anyway, so --no-compare
         # changed what the dry run printed and nothing else.
         built.sync = sync.blind(built)
+
+    # Disks wanted and none to be had is worth a sentence of its own: 311 "missing"
+    # disks read as nothing at all when the CHD set had simply never been fetched,
+    # and a library sat a hundred gigabytes short for it.
+    if any(item.disks for item in built.wanted):
+        resolution.chd_set_found = sources.holds_disks(chd_dir)
+    to_fetch = built.disks_to_fetch
+    if to_fetch and resolution.chd_set_found is False:
+        reporter.warn(f"No CHD set under {config.chd_dir}: {len(to_fetch)} wanted disks "
+                      f"are neither there nor in the library. Fetch them from the "
+                      f"Wanted page, or point the CHD folder in Settings at a CHD set.")
     return built, resolution
 
 

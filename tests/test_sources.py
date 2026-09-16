@@ -404,6 +404,40 @@ class TestLocateSet:
         (inner / "area51" / "area51.chd").write_bytes(b"x")
         assert MameSources.locate_set(str(tmp_path), "chds") == str(inner)
 
+    def test_a_set_two_levels_down_is_left_alone(self, tmp_path):
+        """A hand-made backup of the full set under "mame/" is not Marquee's: a plan
+        that quietly read from it would tie the library to a folder nobody manages."""
+        backup = tmp_path / "mame" / "MAME 0.288 CHDs (merged)"
+        (backup / "area51").mkdir(parents=True)
+        (backup / "area51" / "area51.chd").write_bytes(b"x")
+        assert MameSources.locate_set(str(tmp_path), "chds") == str(tmp_path)
+        roms = tmp_path / "mame" / "MAME 0.289 ROMs (non-merged)"
+        roms.mkdir()
+        (roms / "galaga.zip").write_bytes(b"x")
+        assert MameSources.locate_set(str(tmp_path), "roms") == str(tmp_path)
+
+    def test_a_folder_named_for_the_release_beats_a_fuller_one(self, tmp_path):
+        """An upgrade's download folder holds the old set too, and the old one is
+        the fuller one."""
+        old = tmp_path / "MAME 0.288 ROMs (non-merged)"
+        old.mkdir()
+        for index in range(9):
+            (old / f"game{index}.zip").write_bytes(b"x")
+        new = tmp_path / "MAME 0.289 ROMs (non-merged)"
+        new.mkdir()
+        (new / "galaga.zip").write_bytes(b"x")
+        assert MameSources.locate_set(str(tmp_path), "roms") == str(old)
+        assert MameSources.locate_set(str(tmp_path), "roms", version="0.289") == str(new)
+        # Named for another release is still better than nothing.
+        assert MameSources.locate_set(str(tmp_path), "roms", version="0.290") == str(old)
+
+    def test_holds_disks_is_public(self, tmp_path):
+        assert MameSources.holds_disks(str(tmp_path)) is False
+        (tmp_path / "area51").mkdir()
+        (tmp_path / "area51" / "area51.chd").write_bytes(b"x")
+        assert MameSources.holds_disks(str(tmp_path)) is True
+        assert MameSources.holds_disks(None) is False
+
     def test_a_chd_set_already_pointed_at_is_used_as_it_is(self, tmp_path):
         (tmp_path / "area51").mkdir()
         (tmp_path / "area51" / "area51.chd").write_bytes(b"x")

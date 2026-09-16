@@ -50,6 +50,30 @@ class TestJob:
         wait_for(job, "planned", "error")
         assert "Maze" in job.snapshot(0)["resolution"]["genres"]
 
+    def test_a_chd_folder_with_no_disks_is_called_out(self, config, romset, xml_path,
+                                                      catlist_path, tmp_path):
+        """311 missing disks read as "not downloaded yet" when the CHD folder was simply
+        pointed one level too high; the plan has to say which it is."""
+        empty = tmp_path / "no-disks-here"
+        empty.mkdir()
+        config.chd_dir = str(empty)
+        job = Job()
+        job.start_plan(config, SourceOptions(xml=xml_path, catlist=catlist_path))
+        wait_for(job, "planned", "error")
+        snapshot = job.snapshot(0)
+        assert snapshot["resolution"]["chd_set_found"] is False
+        assert snapshot["plan"]["missing_chds"] > 0
+        assert any("No CHD set under" in event["text"] for event in snapshot["events"])
+
+    def test_a_chd_folder_that_holds_the_set_is_fine(self, config, romset, xml_path,
+                                                     catlist_path):
+        job = Job()
+        job.start_plan(config, SourceOptions(xml=xml_path, catlist=catlist_path))
+        wait_for(job, "planned", "error")
+        snapshot = job.snapshot(0)
+        assert snapshot["resolution"]["chd_set_found"] is True
+        assert not any("No CHD set" in event["text"] for event in snapshot["events"])
+
     def test_copy_after_plan(self, config, romset, xml_path, catlist_path):
         job = Job()
         job.start_plan(config, SourceOptions(xml=xml_path, catlist=catlist_path))

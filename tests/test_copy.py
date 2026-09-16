@@ -349,6 +349,37 @@ class TestMainExitCodes:
         assert built.items and resolution.xml_version == "0.252"
         assert any("machines kept" in message for message in collected.messages)
 
+    def test_a_backup_two_levels_down_is_not_read_from(self, config, romset, tmp_path,
+                                                       xml_path, catlist_path):
+        """A download folder with a hand-made "mame" backup of the full set in it: the
+        plan reads from the download folder only, says the disks are not there, and
+        leaves the backup to its owner."""
+        nest = tmp_path / "downloads" / "mame"
+        nest.mkdir(parents=True)
+        romset["chd_dir"].rename(nest / "MAME 0.252 CHDs (merged)")
+        config.mame_xml, config.catlist_ini = xml_path, catlist_path
+        config.chd_dir = str(tmp_path / "downloads")
+        collected = CollectingReporter()
+        built, resolution = pipeline.build_plan(config, reporter=collected)
+        assert resolution.chd_dir == str(tmp_path / "downloads")
+        assert resolution.chd_set_found is False
+        assert built.missing_chds
+        assert any("No CHD set" in message for message in collected.warnings)
+
+    def test_no_chd_set_under_the_folder_is_said_out_loud(self, config, romset, tmp_path,
+                                                         xml_path, catlist_path):
+        """Disks wanted and none to be had used to read as "not downloaded yet"."""
+        empty = tmp_path / "nothing-here"
+        empty.mkdir()
+        config.mame_xml, config.catlist_ini = xml_path, catlist_path
+        config.chd_dir = str(empty)
+        collected = CollectingReporter()
+        built, resolution = pipeline.build_plan(config, reporter=collected)
+        assert resolution.chd_set_found is False
+        assert built.missing_chds
+        assert any("No CHD set under" in message and str(empty) in message
+                   for message in collected.warnings)
+
 
 class TestChunkedCopy:
     """Files past the threshold are copied in chunks so progress can be reported."""

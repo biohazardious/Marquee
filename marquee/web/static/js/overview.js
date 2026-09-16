@@ -219,6 +219,12 @@ function healthPanel(data) {
       !config.copy_path ? 'not set'
         : data.resolution?.destination_exists === false ? 'does not exist yet — it will be created'
         : config.copy_path),
+    data.resolution?.chd_set_found === false && plan?.disks_to_fetch
+      ? line('warn', 'CHD folder',
+        `no CHD set under ${config.chd_dir || config.rom_dir} yet — `
+        + `${count(plan.disks_to_fetch)} wanted disks are neither there nor in the library; `
+        + 'fetch them from the Wanted page')
+      : null,
     line(config.download_client ? 'good' : 'off', 'Download client',
       config.download_client ? config.download_client : 'none — files are only categorised, not fetched'),
     line(watch.newer ? 'warn' : (watch.newest ? 'good' : 'off'), 'Release',

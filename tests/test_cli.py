@@ -337,6 +337,29 @@ class TestAChosenVersionAlreadyOnDisk:
     def reporter(self):
         return CollectingReporter()
 
+    def test_offline_uses_what_an_earlier_run_fetched(self, monkeypatch, tmp_path):
+        """The cache is on disk too. A plan built online for 0.289 left the XML in it,
+        and the next plan, offline, refused with "no XML for it is on disk"."""
+        cached = tmp_path / "xml" / "mame0.289.xml"
+        cached.parent.mkdir()
+        cached.write_text("<mame build='0.289'/>")
+        monkeypatch.setattr(fetch, "cached_xml", lambda version: str(cached))
+        monkeypatch.setattr(sources, "find_mame_xml", lambda *a, **k: None)
+        monkeypatch.setattr(fetch, "fetch_xml",
+                            lambda *a, **k: pytest.fail("fetched while offline"))
+        found = pipeline.resolve_mame_xml(Config(mame_version="0.289"),
+                                          SourceOptions(offline=True), self.reporter())
+        assert found == str(cached)
+
+    def test_offline_with_an_empty_cache_entry_still_refuses(self, monkeypatch, tmp_path):
+        cached = tmp_path / "mame0.289.xml"
+        cached.write_bytes(b"")
+        monkeypatch.setattr(fetch, "cached_xml", lambda version: str(cached))
+        monkeypatch.setattr(sources, "find_mame_xml", lambda *a, **k: None)
+        with pytest.raises(SourceNotFoundError, match="--offline"):
+            pipeline.resolve_mame_xml(Config(mame_version="0.289"),
+                                      SourceOptions(offline=True), self.reporter())
+
     def test_offline_uses_the_matching_xml_rather_than_failing(self, monkeypatch, xml_path):
         def no_fetch(*_a, **_k):
             raise AssertionError("fetched although the file was on disk")

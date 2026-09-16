@@ -297,6 +297,86 @@ class TestFetchMissing:
         assert error.value.code == 400
 
 
+class TestFetchingDisks:
+    """A disk is fetched when it is nowhere, not when the source folder happens to
+    lack it. 199 of the 311 "missing" disks on the library this was found on were
+    already in the library, and a fetch would have pulled 120 GB for nothing -- while
+    a zip in the source folder whose disk was nowhere was never asked for at all."""
+
+    @pytest.fixture
+    def wired(self, server, xml_path, catlist_path, romset):
+        base, app = server
+        # twodisk's disk: not in the source folder, but in the library already.
+        (romset["chd_dir"] / "twodisk" / "ok.chd").unlink()
+        # parentchd's disk: nowhere.
+        (romset["chd_dir"] / "parentchd" / "pdisk.chd").unlink()
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        for _ in range(200):
+            if app.job.state in ("planned", "error"):
+                break
+            time.sleep(0.05)
+        assert app.job.state == "planned", app.job.error
+        twodisk = next(item for item in app.job.plan.wanted if item.name == "twodisk")
+        library = romset["out_dir"] / twodisk.folder / "twodisk"
+        library.mkdir(parents=True)
+        (library / "ok.chd").write_bytes(b"x" * 600)
+        # Compare again now that the library has something in it.
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        for _ in range(200):
+            if app.job.state in ("planned", "error"):
+                break
+            time.sleep(0.05)
+        app.releases["data"] = [
+            {"kind": "roms", "version": "0.289", "variant": "non-merged",
+             "full_set": True, "name": "MAME 0.289 ROMs (non-merged)",
+             "infohash": "b3" + "0" * 38, "magnet": "magnet:?xt=urn:btih:" + "b3" + "0" * 38,
+             "from_version": None, "datfile": None},
+            {"kind": "chds", "version": "0.289", "variant": "merged",
+             "full_set": True, "name": "MAME 0.289 CHDs (merged)",
+             "infohash": "cd" + "0" * 38, "magnet": "magnet:?xt=urn:btih:" + "cd" + "0" * 38,
+             "from_version": None, "datfile": None}]
+        client = FakeClient(app.job.plan.missing_roms,
+                            disks=[("twodisk", "ok"), ("parentchd", "pdisk")])
+        app.client = lambda overrides=None: client
+        return base, app, client
+
+    def test_a_disk_already_in_the_library_is_not_wanted(self, wired):
+        base, app, _client = wired
+        plan = app.job.plan
+        twodisk = next(item for item in plan.wanted if item.name == "twodisk")
+        parentchd = next(item for item in plan.wanted if item.name == "parentchd")
+        assert "ok" in twodisk.missing_disks and twodisk.disks_to_fetch == []
+        assert parentchd.disks_to_fetch == ["pdisk"]
+        payload = get(base, "/api/missing")
+        assert payload["disks"] == ["pdisk"]
+        # The zip is in the source folder; only the disk is wanted, and the row says so.
+        row = next(row for row in payload["rows"] if row["name"] == "parentchd")
+        assert row["zip"] is False and row["disks"] == ["pdisk"]
+        assert "twodisk" not in {row["name"] for row in payload["rows"]}
+
+    def test_only_the_disk_that_is_nowhere_is_fetched(self, wired):
+        base, _app, client = wired
+        answer = post(base, "/api/download", {"filters": {}, "dry_run": True})
+        chds = next(part for part in answer["parts"] if part["kind"] == "chds")
+        # One file: parentchd and the clone that shares its disk name the same one.
+        assert chds["files"] == 1
+        assert answer["disks"] >= 1
+        assert client.narrowed == [] and client.started == []
+
+    def test_the_zip_only_road_does_not_ask_for_zips_it_has(self, wired):
+        """/api/missing/fetch narrows the ROM set; a machine on the list for its disk
+        alone must not have its zip -- already in the source folder -- re-selected."""
+        base, app, _client = wired
+        try:
+            answer = post(base, "/api/missing/fetch", {"dry_run": True})
+        except urllib.error.HTTPError as error:
+            assert b"Nothing to fetch" in error.read()
+            return
+        parentchd = next(item for item in app.job.plan.wanted if item.name == "parentchd")
+        assert parentchd.rom_to_fetch is False
+        assert answer["files"] < len(app.job.plan.needed)
+
+
 class FakeClient:
     """A download client that records what was asked of it."""
 
