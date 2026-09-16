@@ -152,15 +152,28 @@ class Job:
             raise MarqueeError("Build a plan first, so there is something to check.")
         if not xml_file:
             raise MarqueeError("The release's XML is not on disk to check against.")
-        if backends.is_remote(self.config.copy_path):
-            # check_library opens the files with os.path; over a network protocol that
-            # would report every game absent and call it a result.
-            raise MarqueeError("Checking looks inside every file, which is only "
-                               "possible for a library on a local path.")
-
         plan, config = self.plan, self.config
+        remote = backends.is_remote(config.copy_path)
 
         def work():
+            reporter = QueueReporter(self)
+            backend, opener = None, None
+            if remote:
+                # Read back through the same backend the transfer writes with: a
+                # share on the console is checked in place, one ranged read per zip.
+                backend = backends.for_destination(config.copy_path, reporter=reporter)
+                if not backend.READS_BACK:
+                    backend.close()
+                    raise MarqueeError("Files on an FTP library cannot be read back "
+                                       "to check them; SMB and SFTP can.")
+                opener = backend.open_read
+            try:
+                _check(backend, opener)
+            finally:
+                if backend is not None:
+                    backend.close()
+
+        def _check(backend, opener):
             reporter = QueueReporter(self)
             # What the library holds, not what the torrent folder holds. Before the
             # first transfer the two are disjoint, and checking the 1,144 games that
@@ -197,7 +210,8 @@ class Job:
                         where[action.machine] = action.from_relpath
             counts = verify.check_library(
                 here, manifests, config.copy_path, reporter,
-                should_continue=lambda: not self._cancel.is_set(), where=where)
+                should_continue=lambda: not self._cancel.is_set(), where=where,
+                opener=opener)
             with self._lock:
                 self.checked = counts
                 # On the plan as well: the page's description of it is memoised, and

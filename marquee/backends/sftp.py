@@ -142,6 +142,20 @@ class SftpCopy(CopyBackend):
         except IOError:
             return None
 
+    def open_read(self, relpath):
+        remote = posixpath.join(self.root, relpath)
+        try:
+            return self.conn.open(remote, "rb")
+        except (IOError, OSError) as error:
+            raise FileNotFoundError(remote) from error
+
+    def probe(self):
+        try:
+            return sorted(self.conn.listdir(self.root))
+        except (IOError, OSError) as error:
+            raise BackendError(f"Connected, but {self.root} could not be listed: "
+                               f"{error}") from error
+
     def index(self, on_progress=None):
         found = {}
         self._walk(self.root, "", found, on_progress)

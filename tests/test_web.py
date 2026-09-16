@@ -1855,3 +1855,31 @@ class TestTheTransferByGenre:
         tree = get(base, "/api/changes?kind=orphan&group=1")["tree"]
         assert [g["name"] for g in tree] == ["Maze"]
         assert tree[0]["categories"][0]["name"] == "Maze/Misc"
+
+
+class TestReachingTheLibrary:
+    """The picker walks this machine's disks; a share on the console has to be
+    tested, not browsed."""
+
+    def test_a_local_folder_answers_with_what_is_in_it(self, server, romset):
+        base, _app = server
+        (romset["out_dir"] / "Maze").mkdir()
+        answer = post(base, "/api/destination/test", {"copy_path": str(romset["out_dir"])})
+        assert answer["ok"] and answer["remote"] is False
+        assert answer["sample"] == ["Maze"]
+        assert answer["writable"] is True
+        assert "Maze" in answer["message"]
+
+    def test_a_folder_that_is_not_there_says_so(self, server, tmp_path):
+        base, _app = server
+        with pytest.raises(urllib.error.HTTPError) as error:
+            post(base, "/api/destination/test", {"copy_path": str(tmp_path / "nowhere")})
+        assert error.value.code == 400
+        assert "nowhere" in json.loads(error.value.read())["error"]
+
+    def test_a_share_that_cannot_be_reached_is_a_message_not_a_traceback(self, server):
+        base, _app = server
+        with pytest.raises(urllib.error.HTTPError) as error:
+            post(base, "/api/destination/test", {"copy_path": "smb://127.0.0.1:1/share/mame"})
+        assert error.value.code == 400
+        assert "Could not reach smb://127.0.0.1:1/share/mame" in json.loads(error.value.read())["error"]

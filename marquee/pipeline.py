@@ -422,6 +422,9 @@ def _execute(built, config, reporter, backend, should_continue, delete_orphans,
         if not keep_going():
             break
         state["name"] = posixpath.basename(action.relpath)
+        # Said now, not on the first byte callback: a backend that reports per file
+        # left the page naming the previous file for the whole of the next one.
+        reporter.progress("copy", state["bytes"], total_bytes, state["name"])
         try:
             # An UPDATE means the diff knows the file there is wrong -- possibly at
             # exactly the size of the right one -- so the backend's same-size skip

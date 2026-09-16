@@ -1,3 +1,4 @@
+import io
 import os
 import posixpath
 import re
@@ -15,6 +16,82 @@ from . import BackendError, CopyBackend, is_managed
 # The userinfo group is greedy so it ends at the last '@' before the path, which
 # keeps an '@' inside the password out of the hostname.
 CONN_STR_RE = re.compile(r'smb://(?:([^/]*)@)?([^/:]+)(?::(\d+))?/(.+)')
+
+
+class _Counting:
+    """A file object that reports what is read from it, so an upload that pysmb
+    drives in one call can still show progress."""
+
+    def __init__(self, handle, on_bytes):
+        self.handle, self.on_bytes = handle, on_bytes
+
+    def read(self, size=-1):
+        data = self.handle.read(size)
+        if data:
+            self.on_bytes(len(data))
+        return data
+
+    def __getattr__(self, name):
+        return getattr(self.handle, name)
+
+
+class SmbReadable:
+    """A read-only, seekable view of one file on a share.
+
+    pysmb has no file handle to speak of: it fetches a byte range per call. That is
+    exactly what reading a zip's central directory needs -- the last few kilobytes,
+    then a seek or two -- so each read() is one ranged fetch and nothing is
+    downloaded that is not asked for. Enough of the file protocol for zipfile.
+    """
+
+    def __init__(self, conn, share, path):
+        self.conn, self.share, self.path = conn, share, path
+        try:
+            self.size = conn.getAttributes(share, path).file_size
+        except (smb_structs.OperationFailure, smb_structs.ProtocolError) as error:
+            raise FileNotFoundError(path) from error
+        self.position = 0
+
+    def read(self, length=-1):
+        if length is None or length < 0:
+            length = self.size - self.position
+        length = max(0, min(length, self.size - self.position))
+        if not length:
+            return b""
+        buffer = io.BytesIO()
+        try:
+            self.conn.retrieveFileFromOffset(self.share, self.path, buffer,
+                                             offset=self.position, max_length=length)
+        except (smb_structs.OperationFailure, smb_structs.ProtocolError,
+                socket.error) as error:
+            raise OSError(f"reading {self.path}: {error}") from error
+        data = buffer.getvalue()
+        self.position += len(data)
+        return data
+
+    def seek(self, offset, whence=os.SEEK_SET):
+        base = {os.SEEK_SET: 0, os.SEEK_CUR: self.position, os.SEEK_END: self.size}[whence]
+        self.position = max(0, base + offset)
+        return self.position
+
+    def tell(self):
+        return self.position
+
+    def seekable(self):
+        return True
+
+    def readable(self):
+        return True
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+        return False
 
 
 class RemoteCopy(CopyBackend):
@@ -108,10 +185,11 @@ class RemoteCopy(CopyBackend):
             return
 
         with open(local_file_path, 'rb') as f:
-            self._store(remote_file, f)
+            # Counted as pysmb reads it, not when it is done: a 12 GB disk used to
+            # sit at the same byte count for seven minutes while the network was
+            # busy, and the page called it stalled.
+            self._store(remote_file, _Counting(f, on_bytes) if on_bytes else f)
         listing[remote_filename] = local_size
-        if on_bytes:
-            on_bytes(local_size)
 
     def _store(self, remote, handle):
         """Upload to a partial name, then rename over the target.
@@ -201,6 +279,16 @@ class RemoteCopy(CopyBackend):
 
     # -- sync ---------------------------------------------------------------- #
 
+    def probe(self):
+        try:
+            entries = self.conn.listPath(self.share_name, self.remote_path.strip("/") or "/")
+        except (smb_structs.OperationFailure, smb_structs.ProtocolError,
+                socket.error) as error:
+            raise BackendError(f"Connected to {self.server}, but {self.share_name}/"
+                               f"{self.remote_path} could not be listed: {error}") from error
+        return sorted(entry.filename for entry in entries
+                      if entry.filename not in (".", ".."))
+
     def index(self, on_progress=None):
         """Walk the share below remote_path. One listPath per directory, not per file."""
         found = {}
@@ -223,6 +311,9 @@ class RemoteCopy(CopyBackend):
             if on_progress:
                 on_progress(len(found))
         return found
+
+    def open_read(self, relpath):
+        return SmbReadable(self.conn, self.share_name, self._absolute(relpath))
 
     def _absolute(self, relpath):
         return posixpath.join(self.remote_path, relpath).strip("/")

@@ -202,3 +202,34 @@ class TestWhereTheFileActuallyIs:
         verify.check_library([item], {"old": [("o.1", crc_of(b"today"), False)]},
                              str(tmp_path), where={"old": "Casino/Cards/old.zip"})
         assert item.state == verify.STALE
+
+
+class TestReadingThroughAnOpener:
+    """A library on a share is not on this machine's disk: the files come through
+    the backend, as seekable objects, by their library-relative path."""
+
+    def test_the_same_verdicts_come_back(self, tmp_path):
+        import io, zipfile
+        from marquee import verify
+        good = io.BytesIO()
+        with zipfile.ZipFile(good, "w") as archive:
+            archive.writestr("a.bin", b"ok")
+        crc = f"{zipfile.ZipFile(io.BytesIO(good.getvalue())).getinfo('a.bin').CRC:08x}"
+        files = {"Maze/Misc/pacman.zip": good.getvalue(), "Maze/Misc/junk.zip": b"nope"}
+
+        def opener(path):
+            if path not in files:
+                raise FileNotFoundError(path)
+            return io.BytesIO(files[path])
+
+        class Item:
+            def __init__(self, name):
+                self.name, self.folder, self.state, self.state_detail = name, "Maze/Misc", "", []
+
+        items = [Item("pacman"), Item("junk"), Item("gone")]
+        manifests = {"pacman": [("a.bin", crc, False)], "junk": [("a.bin", crc, False)],
+                     "gone": [("a.bin", crc, False)]}
+        counts = verify.check_library(items, manifests, "/not/used", opener=opener)
+        assert {item.name: item.state for item in items} == {
+            "pacman": verify.CURRENT, "junk": verify.DAMAGED, "gone": verify.ABSENT}
+        assert counts == {verify.CURRENT: 1, verify.DAMAGED: 1, verify.ABSENT: 1}

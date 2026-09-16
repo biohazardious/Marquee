@@ -152,6 +152,15 @@ class LocalCopy(CopyBackend):
 
     # -- sync ---------------------------------------------------------------- #
 
+    def open_read(self, relpath):
+        return open(os.path.join(self.copy_path, relpath.replace("/", os.sep)), "rb")
+
+    def probe(self):
+        root = self.copy_path.rstrip(os.sep) or os.sep
+        if not os.path.isdir(root):
+            raise FileNotFoundError(f"{root} is not a folder that exists yet")
+        return sorted(name for name in os.listdir(root) if not name.startswith("."))
+
     def index(self, on_progress=None):
         root = self.copy_path.rstrip(os.sep)
         found = {}

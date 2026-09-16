@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from .. import (acquire, acquisition, art, atomic, download, fetch, indexers, manifest,
+from .. import (acquire, acquisition, art, atomic, backends, download, fetch, indexers, manifest,
                 pipeline, sources, sync)
 from .. import config as configuration
 from ..errors import MarqueeError
@@ -135,6 +135,42 @@ class Application:
                             f"(Web API {info['api_version']}), "
                             f"downloading to {info['save_path'] or 'its default folder'}"),
                 "details": info}
+
+    def test_destination(self, body):
+        """Reach the library and read its top level, before anything is planned.
+
+        The folder picker can only walk this machine's disks; a share on the console
+        cannot be browsed, and the Browse button used to wander into a local folder
+        literally named "smb:" instead of saying so. This is the answer for a remote
+        library: connect, list, say what is there.
+        """
+        copy_path = ((body or {}).get("copy_path") or self.current_config().copy_path
+                     or "").strip()
+        if not copy_path:
+            raise MarqueeError("No library path to test.")
+        remote = backends.is_remote(copy_path)
+        backend = None
+        try:
+            backend = backends.for_destination(copy_path)
+            names = backend.probe()
+        except (MarqueeError, OSError, ValueError, ConnectionError) as error:
+            raise MarqueeError(f"Could not reach {copy_path}: {error}") from error
+        except Exception as error:  # noqa: BLE001 - pysmb/paramiko raise their own
+            raise MarqueeError(f"Could not reach {copy_path}: "
+                               f"{type(error).__name__}: {error}") from error
+        finally:
+            if backend is not None:
+                backend.close()
+        folders = [name for name in names if "." not in name][:6]
+        managed = sum(1 for name in names if backends.is_managed(name))
+        where = (f"{backend.server}, share {backend.share_name}" if remote and hasattr(backend, "share_name")
+                 else copy_path)
+        message = (f"Reached {where}: {len(names):,} entries at the top"
+                   + (f" ({', '.join(folders)}{'…' if len(names) > 6 else ''})" if folders else "")
+                   + (f", {managed:,} loose ROM files" if managed else "") + ".")
+        return {"ok": True, "remote": remote, "entries": len(names), "sample": folders,
+                "message": message,
+                "writable": None if remote else os.access(copy_path, os.W_OK)}
 
     def refresh_releases(self, _body=None):
         def work():

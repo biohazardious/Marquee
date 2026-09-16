@@ -321,6 +321,7 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/versions": self.app.start_versions,
                   "/api/import": self.app.import_settings,
                   "/api/client/test": self.app.test_client,
+                  "/api/destination/test": self.app.test_destination,
                   "/api/releases/refresh": self.app.refresh_releases,
                   "/api/art/download": self.app.start_art,
                   "/api/missing/fetch": self.app.fetch_missing,

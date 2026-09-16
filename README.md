@@ -128,6 +128,10 @@ A dark web UI with nine pages, in the order the work happens:
   [What a transfer will do](#what-a-transfer-will-do).
 - **Activity** — the running job, the download queue, and the log.
 - **Settings** — media management, download client (with a Test button), indexer.
+  The Library field has a **Test** button: for a share on the console
+  (`smb://192.168.1.20/Batocera3/roms/mame`) it connects and reads the top level --
+  "Reached 192.168.1.20, share Batocera3: 48 entries (Music, Multiplay, …)" -- since
+  the folder picker can only walk this machine's own disks.
 - **System** — which XML and catlist are in use, what the library on disk records,
   **Check the library**, and the breakdown of every machine the filters dropped. On
   0.289 that is 4,323 of 16,350 before your own exclusions — 2,861 with no screen at
@@ -173,11 +177,13 @@ replaced, a chip renamed, a mask ROM redumped — so `strider2.zip` from 0.252 a
 checks for existence carries those differences for ever, and that is the difference
 between a copy of a romset and one that is kept up to date.
 
-**Check the library**, on the System page or beside the Transfer summary,
-reads every zip's central directory — entry
-names and CRC-32s, no unpacking — and compares them with the release's own ROM list,
-one ROM at a time. About 9 ms a game: a 10,000-game library in under two minutes, with
-no network.
+**Check the library**, on the System page or beside the Transfer summary, works on a local
+folder and on an SMB or SFTP share alike (each zip's central directory is read in place;
+plain FTP cannot seek, so it is the one destination that cannot be checked). It
+reads every zip's central directory — entry names and CRC-32s, no unpacking — and
+compares them with the release's own ROM list, one ROM at a time. About 9 ms a game
+on a local disk (a 10,000-game library in under two minutes), and about five minutes
+for the same library on a share over the LAN.
 
 Each game comes back as **current**, **out of date** (a ROM is there with the wrong
 contents, or one it owns outright is missing), **missing an inherited ROM** (what a

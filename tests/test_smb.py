@@ -256,3 +256,67 @@ class TestUploadsAreAllOrNothing:
         copier.copy(str(source), "Maze")
         assert conn.renamed == [("roms/Maze/galaga.zip.part", "roms/Maze/galaga.zip")]
         assert conn.stored == ["roms/Maze/galaga.zip"]
+
+
+class TestReadingAFileBack:
+    """zipfile needs seek, tell and read; pysmb offers ranged fetches. SmbReadable is
+    the adapter, and it must fetch only what is asked for."""
+
+    class Attributes:
+        def __init__(self, size):
+            self.file_size = size
+
+    class RangedConnection(FakeConnection):
+        def __init__(self, files):
+            super().__init__()
+            self.files, self.fetched = files, []
+
+        def getAttributes(self, _share, path):
+            if path not in self.files:
+                raise RemoteCopy.smb_structs.OperationFailure("no such file", [])
+            return TestReadingAFileBack.Attributes(len(self.files[path]))
+
+        def retrieveFileFromOffset(self, _share, path, out, offset=0, max_length=-1, **_kw):
+            data = self.files[path][offset:offset + max_length if max_length >= 0 else None]
+            self.fetched.append((offset, len(data)))
+            out.write(data)
+
+    def test_a_zip_on_the_share_is_indexed_from_its_tail(self):
+        import io, zipfile
+        from marquee import verify
+        payload = io.BytesIO()
+        with zipfile.ZipFile(payload, "w") as archive:
+            archive.writestr("pacman.6e", b"x" * 4000)
+            archive.writestr("pacman.6f", b"y" * 4000)
+        conn = self.RangedConnection({"roms/Maze/pacman.zip": payload.getvalue()})
+        copier = build("smb://u:p@nas/Share/roms", conn)
+        with copier.open_read("Maze/pacman.zip") as handle:
+            found = verify.zip_index(handle)
+        assert set(found) == {"pacman.6e", "pacman.6f"}
+        # The central directory, not the whole 8 KB of content.
+        assert sum(length for _offset, length in conn.fetched) < 2000
+
+    def test_a_missing_file_is_file_not_found(self):
+        conn = self.RangedConnection({})
+        copier = build("smb://u:p@nas/Share/roms", conn)
+        with pytest.raises(FileNotFoundError):
+            copier.open_read("Maze/none.zip")
+
+
+class TestProgressDuringAnUpload:
+    def test_bytes_are_counted_as_pysmb_reads_them(self, tmp_path):
+        source = tmp_path / "big.chd"
+        source.write_bytes(b"c" * 300_000)
+
+        class Reading(FakeConnection):
+            def storeFile(self, _share, path, handle, timeout=30):
+                while handle.read(65536):
+                    pass
+                self.stored.append(path)
+
+        conn = Reading()
+        copier = build("smb://u:p@nas/Share/roms", conn)
+        moved = []
+        copier.copy(str(source), "Maze", on_bytes=moved.append)
+        assert sum(moved) == 300_000
+        assert len(moved) >= 4, "reported in pieces, not once at the end"

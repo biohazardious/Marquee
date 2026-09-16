@@ -49,6 +49,21 @@ class CopyBackend:
     def close(self):
         """Release whatever connection the backend holds. A local folder holds none."""
 
+    # Whether files at the destination can be read back with random access. That is
+    # what checking a zip's contents needs; plain FTP cannot do it.
+    READS_BACK = True
+
+    def open_read(self, relpath):
+        """A seekable, read-only file object for one file at the destination, or
+        FileNotFoundError. The library check reads every zip's central directory
+        through this, which is a few kilobytes at the end of each file."""
+        raise NotImplementedError
+
+    def probe(self):
+        """The names at the destination's top level: proof the place can be reached
+        and read, without walking all of it. Used by the settings page's Test."""
+        raise NotImplementedError
+
     def index(self, on_progress=None):
         """{relative path: size} of everything already at the destination.
 

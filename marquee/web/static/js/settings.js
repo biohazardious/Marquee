@@ -48,13 +48,35 @@ function field(id, label, note, value, type = 'text') {
     el('input', { type, id, value: value ?? '' }));
 }
 
-function folderField(id, label, note, value) {
+const REMOTE = /^(smb|ftp|ftps|sftp|ssh):\/\//i;
+
+function folderField(id, label, note, value, { testable = false } = {}) {
   const input = el('input', { type: 'text', id, value: value ?? '' });
+  const result = el('div', { class: 'fld-result' });
+  // A share on the console cannot be walked by the picker, and pretending to
+  // (it opened at "/") is what lost a whole live test. A remote URL gets tested
+  // instead; a local path can have both.
+  const test = async () => {
+    clear(result);
+    result.append(el('div', { class: 'muted small', text: 'Reaching it…' }));
+    try {
+      const answer = await post('/api/destination/test', { copy_path: input.value.trim() });
+      clear(result);
+      result.append(el('div', { class: 'banner good', style: 'margin:8px 0 0',
+        text: `✓ ${answer.message}${answer.writable === false ? ' Not writable.' : ''}` }));
+    } catch (error) {
+      clear(result);
+      result.append(el('div', { class: 'banner bad', style: 'margin:8px 0 0', text: `✗ ${error.message}` }));
+    }
+  };
+  const browse = () => (REMOTE.test(input.value.trim()) ? test() : picker(input));
   return el('label', { class: 'fld' },
     el('span', {}, label, note ? el('em', { text: ` — ${note}` }) : null),
     el('div', { class: 'rowflex' },
       el('div', { style: 'flex:1' }, input),
-      el('button', { class: 'btn sm', text: 'Browse', onclick: () => picker(input) })));
+      el('button', { class: 'btn sm', text: 'Browse', onclick: browse }),
+      testable ? el('button', { class: 'btn sm', text: 'Test', onclick: test }) : null),
+    result);
 }
 
 export function render() {
@@ -78,7 +100,8 @@ export function render() {
       el('div', { class: 'body' },
         folderField('rom_dir', 'ROM folder', 'the flat folder of .zip files', config.rom_dir),
         folderField('chd_dir', 'CHD folder', 'one subfolder per machine', config.chd_dir),
-        folderField('copy_path', 'Library', 'local path, or smb:// ftp:// sftp:// URL', config.copy_path),
+        folderField('copy_path', 'Library', 'local path, or smb://host/share/path — Test reaches it',
+          config.copy_path, { testable: true }),
         el('label', { class: 'check' },
           el('input', { type: 'checkbox', id: 'hardlink', checked: config.hardlink }),
           el('span', {}, el('b', { text: 'Hardlink instead of copying' }),

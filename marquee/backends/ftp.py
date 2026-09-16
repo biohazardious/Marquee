@@ -144,6 +144,21 @@ class FtpCopy(CopyBackend):
         except ftplib.all_errors:
             return None
 
+    # RETR streams from a REST offset, but there is no way to stop part-way without
+    # tearing the transfer down; reading a zip's tail that way is not worth it.
+    READS_BACK = False
+
+    def open_read(self, relpath):
+        raise BackendError("Files on an FTP library cannot be read back piecemeal; "
+                           "check it over SFTP or SMB, or mount it locally.")
+
+    def probe(self):
+        try:
+            return sorted(posixpath.basename(name) for name in self.conn.nlst(self.root))
+        except ftplib.all_errors as error:
+            raise BackendError(f"Connected, but {self.root} could not be listed: "
+                               f"{error}") from error
+
     def index(self, on_progress=None):
         found = {}
         self._walk(self.root, "", found, on_progress)

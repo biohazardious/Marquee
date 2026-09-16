@@ -32,14 +32,15 @@ ABSENT = "absent"
 STATES = (STALE, DAMAGED, INCOMPLETE, ABSENT, CURRENT)
 
 
-def zip_index(path):
+def zip_index(source):
     """{entry name, lowercased: crc as eight hex digits} from the central directory.
 
-    Raises the zipfile error for a file that is not a readable archive; the caller
-    decides what that means.
+    `source` is a path or an open, seekable file object -- a share on the console is
+    read through the latter. Raises the zipfile error for a file that is not a
+    readable archive; the caller decides what that means.
     """
     found = {}
-    with zipfile.ZipFile(path) as archive:
+    with zipfile.ZipFile(source) as archive:
         for info in archive.infolist():
             if info.is_dir():
                 continue
@@ -50,23 +51,37 @@ def zip_index(path):
     return found
 
 
-def check(path, expected):
+def check(path, expected, opener=None):
     """(state, [what is wrong]) for one machine's zip.
 
     `expected` is [(rom name, crc, inherited from the parent)]. Extra entries are fine:
     a non-merged zip carries its BIOS and device ROMs too, and nothing here is
     interested in those.
+
+    `opener(path)` returns a seekable file object, or raises FileNotFoundError: that
+    is how a library on a share is read. Without one, `path` is on this machine.
     """
     if not expected:
         # Nothing to check it against. Saying "current" would be a claim; the caller
         # treats an unknown machine as untouched.
         return (CURRENT, [])
-    if not os.path.isfile(path):
-        return (ABSENT, [])
-    try:
-        found = zip_index(path)
-    except (zipfile.BadZipFile, OSError) as error:
-        return (DAMAGED, [str(error)])
+    if opener is None:
+        if not os.path.isfile(path):
+            return (ABSENT, [])
+        try:
+            found = zip_index(path)
+        except (zipfile.BadZipFile, OSError) as error:
+            return (DAMAGED, [str(error)])
+    else:
+        try:
+            handle = opener(path)
+        except FileNotFoundError:
+            return (ABSENT, [])
+        try:
+            with handle:
+                found = zip_index(handle)
+        except (zipfile.BadZipFile, OSError) as error:
+            return (DAMAGED, [str(error)])
 
     wrong, missing, inherited = [], [], []
     for name, crc, merged in expected:
@@ -88,7 +103,7 @@ def check(path, expected):
 
 
 def check_library(items, manifests, root, reporter=None, should_continue=None,
-                  where=None):
+                  where=None, opener=None):
     """Check every machine in `items` against the release, in place.
 
     Sets `state` and `state_detail` on each item and returns {state: count}. Stopping
@@ -98,7 +113,8 @@ def check_library(items, manifests, root, reporter=None, should_continue=None,
     `where` names the file's current location for machines that are not at the path
     they belong at yet -- a library built to an older layout holds them one folder
     out, and looking only where they are *going* reports a file that is right there as
-    absent.
+    absent. With an `opener` the files are read through it by their library-relative
+    path, and `root` is not used: that is a library on a share.
     """
     reporter = reporter or Reporter()
     where = where or {}
@@ -109,8 +125,8 @@ def check_library(items, manifests, root, reporter=None, should_continue=None,
             reporter.warn(f"Stopped after {position - 1:,} of {total:,}.")
             break
         here = where.get(item.name) or f"{item.folder}/{item.name}.zip"
-        path = os.path.join(root, here.replace("/", os.sep))
-        state, detail = check(path, manifests.get(item.name))
+        path = here if opener else os.path.join(root, here.replace("/", os.sep))
+        state, detail = check(path, manifests.get(item.name), opener)
         item.state, item.state_detail = state, detail
         counts[state] = counts.get(state, 0) + 1
         if position % 200 == 0 or position == total:
