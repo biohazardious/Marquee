@@ -357,3 +357,37 @@ class TestAChosenVersionAlreadyOnDisk:
         with pytest.raises(SourceNotFoundError, match="/nonexistent/x.xml"):
             pipeline.resolve_mame_xml(Config(), SourceOptions(xml="/nonexistent/x.xml"),
                                       self.reporter())
+
+
+class TestTheFolderNamesTheRelease:
+    def test_a_pleasuredome_folder_says_which_release(self):
+        assert sources.version_in_path("/downloads/MAME 0.289 ROMs (non-merged)") == "0.289"
+        assert sources.version_in_path("/downloads/MAME 0.288 CHDs (merged)/dlair") == "0.288"
+        assert sources.version_in_path("/srv/roms/mame") is None
+
+    def test_a_fresh_install_fetches_the_release_the_folder_names(self, tmp_path, monkeypatch):
+        folder = tmp_path / "MAME 0.289 ROMs (non-merged)"
+        folder.mkdir()
+        (folder / "pacman.zip").write_bytes(b"x")
+        asked = []
+
+        def fake_fetch(version, refresh=False, reporter=None):
+            asked.append(version)
+            target = tmp_path / "mame0.289.xml"
+            target.write_text('<mame build="0.289 (mame0289)"/>')
+            return str(target)
+
+        monkeypatch.setattr(fetch, "fetch_xml", fake_fetch)
+        monkeypatch.setattr(sources, "find_mame_xml", lambda *a, **k: None)
+        monkeypatch.setattr(sources, "generate_listxml", lambda *a, **k: None)
+        found = pipeline.resolve_mame_xml(Config(rom_dir=str(tmp_path)), SourceOptions(),
+                                          CollectingReporter())
+        assert asked == ["0.289"]
+        assert found.endswith("mame0.289.xml")
+
+    def test_without_a_named_folder_the_message_points_at_settings(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sources, "find_mame_xml", lambda *a, **k: None)
+        monkeypatch.setattr(sources, "generate_listxml", lambda *a, **k: None)
+        with pytest.raises(SourceNotFoundError, match="Pick the release in Settings"):
+            pipeline.resolve_mame_xml(Config(rom_dir=str(tmp_path)), SourceOptions(),
+                                      CollectingReporter())

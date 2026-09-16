@@ -397,7 +397,10 @@ use, falls back to it — and says so.
 
 Tell it which MAME release your romset is and both the machine list and the categories
 are fetched for exactly that release — nothing to download by hand, nothing to keep in
-step.
+step. The **MAME release** field on the Settings page lists every version that has
+both; left on *Automatic*, the release is read off the source folder's name, which
+is how Pleasuredome names its sets ("MAME 0.289 ROMs (non-merged)" means 0.289), so
+a fresh install with the torrent folder pointed at needs nothing chosen at all.
 
 ```
 marquee --list-versions

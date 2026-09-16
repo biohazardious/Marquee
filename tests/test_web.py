@@ -1897,3 +1897,22 @@ class TestTheKeyFromTheEnvironment:
         monkeypatch.setenv("MARQUEE_API_KEY", "")
         key = api_key(str(tmp_path))
         assert key and (tmp_path / "api_key").read_text().strip() == key
+
+
+class TestChoosingTheRelease:
+    def test_a_version_from_the_form_is_saved(self, server):
+        base, app = server
+        post(base, "/api/save", {"mame_version": "0.289"})
+        assert app.current_config().mame_version == "0.289"
+
+    def test_automatic_clears_it(self, server):
+        base, app = server
+        post(base, "/api/save", {"mame_version": "0.289"})
+        post(base, "/api/save", {"mame_version": ""})
+        assert app.current_config().mame_version is None
+
+    def test_a_form_that_does_not_mention_it_leaves_it_alone(self, server):
+        base, app = server
+        post(base, "/api/save", {"mame_version": "0.289"})
+        post(base, "/api/save", {"allow_mature": True})
+        assert app.current_config().mame_version == "0.289"

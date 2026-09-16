@@ -226,6 +226,23 @@ def _holds_disks(directory, limit=40):
     return False
 
 
+FOLDER_VERSION_RE = re.compile(r"\bMAME\s+(0\.\d{2,3})\b", re.IGNORECASE)
+
+
+def version_in_path(path):
+    """The MAME release a folder name says it holds, or None.
+
+    Pleasuredome names its sets "MAME 0.289 ROMs (non-merged)" and a download client
+    saves each torrent under its own name, so on a fresh install the release is
+    written on the source folder even when nothing else says it.
+    """
+    for part in reversed(str(path or "").replace("\\", "/").split("/")):
+        match = FOLDER_VERSION_RE.search(part)
+        if match:
+            return match.group(1)
+    return None
+
+
 def locate_set(directory, kind="roms"):
     """The folder that actually holds the set, one level down if that is where it is.
 

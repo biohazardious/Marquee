@@ -937,9 +937,15 @@ class Application:
                 overrides[key] = body[key]
         # The chosen version belongs to the configuration too: it is what gets saved and
         # what the destination's record ends up naming.
-        if body.get("mame_version"):
-            overrides["mame_version"] = body["mame_version"]
-        return self.current_config().with_overrides(**overrides)
+        version = (body.get("mame_version") or "").strip() if "mame_version" in body else None
+        if version:
+            overrides["mame_version"] = version
+        config = self.current_config().with_overrides(**overrides)
+        if "mame_version" in body and not version:
+            # The form's "Automatic": with_overrides ignores None, so cleared has to be
+            # said explicitly or the old choice would survive every save.
+            config.mame_version = None
+        return config
 
     # -- actions ------------------------------------------------------------ #
 

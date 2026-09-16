@@ -37,6 +37,7 @@ export function values() {
     copy_artwork: checked('copy_artwork'),
     allow_mature: checked('allow_mature'),
     mature_rom_folder: read('mature_rom_folder'),
+    mame_version: read('mame_version'),
   };
   for (const key of Object.keys(out)) if (out[key] === undefined) delete out[key];
   return out;
@@ -79,6 +80,44 @@ function folderField(id, label, note, value, { testable = false } = {}) {
     result);
 }
 
+/* The release the romset is. Nothing else on this page matters as much: the XML and
+   the catlist are fetched for exactly this version, and a fresh install with no
+   version chosen used to stop with "could not find a mame*.xml". Left on Automatic,
+   the folder name decides ("MAME 0.289 ROMs (non-merged)" says 0.289). */
+let versions = null;
+
+export function renderVersions(payload) {
+  versions = payload || null;
+  const box = $('mameVersionBox');
+  if (!box) return;
+  const current = ($('mame_version') && $('mame_version').value) ?? (current_() || '');
+  const list = (versions && versions.data) || [];
+  const signature = `${list.map((entry) => entry.version).join('|')}|${Boolean(versions && versions.running)}`;
+  // Polled every few seconds; rebuilding the <select> under an open menu closes it.
+  if (box.dataset.signature === signature && $('mame_version')) return;
+  box.dataset.signature = signature;
+  clear(box);
+  const select = el('select', { id: 'mame_version' },
+    el('option', { value: '', text: 'Automatic — from the folder name' }),
+    list.filter((entry) => entry.usable).map((entry) => el('option', {
+      value: entry.version, text: `MAME ${entry.version}`, selected: entry.version === current })));
+  if (current && !list.some((entry) => entry.version === current)) {
+    // Chosen before the list arrived, or a release the list does not know: still
+    // shown, still selected, never silently dropped.
+    select.append(el('option', { value: current, text: `MAME ${current}`, selected: true }));
+  }
+  box.append(select);
+  if (versions && versions.running && !list.length) {
+    box.append(el('div', { class: 'hint', text: 'Reading the list of releases…' }));
+  } else if (versions && versions.error && !list.length) {
+    box.append(el('div', { class: 'hint', text: `Could not read the release list: ${versions.error}. Type the version into settings.ini, or leave Automatic.` }));
+  } else if (!list.length) {
+    post('/api/versions').catch(() => {});
+  }
+}
+
+function current_() { return current ? current.mame_version : ''; }
+
 export function render() {
   const host = $('settingsBody');
   if (!host) return;
@@ -93,6 +132,9 @@ export function render() {
   }
   const config = current;
 
+  // The version box is filled after the form is on the page, from the catalogue.
+  queueMicrotask(() => renderVersions(versions));
+
   host.append(
     el('div', { class: 'panel' },
       el('h2', {}, 'Media management',
@@ -102,6 +144,9 @@ export function render() {
         folderField('chd_dir', 'CHD folder', 'one subfolder per machine', config.chd_dir),
         folderField('copy_path', 'Library', 'local path, or smb://host/share/path — Test reaches it',
           config.copy_path, { testable: true }),
+        el('label', { class: 'fld' },
+          el('span', {}, 'MAME release', el('em', { text: ' — the XML and catlist are fetched for exactly this version' })),
+          el('div', { id: 'mameVersionBox' })),
         el('label', { class: 'check' },
           el('input', { type: 'checkbox', id: 'hardlink', checked: config.hardlink }),
           el('span', {}, el('b', { text: 'Hardlink instead of copying' }),

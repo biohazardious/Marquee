@@ -389,6 +389,7 @@ function onState(data) {
   // Drawn once on navigation, before the first poll has landed -- so it has to be
   // drawn again when the numbers it reports turn up.
   if (page === 'system') renderSystem();
+  if (page === 'settings') settings.renderVersions(data.versions);
 }
 
 let settingsAdopted = false;
@@ -763,6 +764,7 @@ async function pollReleases() {
   try {
     api.state.releases = await api.releases();
     if (page === 'settings') settings.renderReleases(api.state.releases);
+    if (page === 'settings') settings.renderVersions(api.state.data.versions);
     if (api.state.releases.running) setTimeout(pollReleases, 1500);
   } catch { /* the indexer is optional */ }
 }
