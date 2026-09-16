@@ -362,13 +362,23 @@ def _content_type(path):
                              "application/octet-stream")
 
 
+API_KEY_ENV = "MARQUEE_API_KEY"
+
+
 def api_key(settings_path):
     """A token that survives a restart, kept beside the settings.
 
     A fresh token on every start means every bookmark, every reverse proxy and every
     script breaks whenever the container is restarted -- which, in a container, is
     often. Written 0600 because it is a password.
+
+    `MARQUEE_API_KEY` in the environment wins over the file and is never written to
+    it: on a NAS the container's log is the awkward place to fish a key out of, and
+    the environment is where its settings already live.
     """
+    chosen = (os.environ.get(API_KEY_ENV) or "").strip()
+    if chosen:
+        return chosen
     directory = os.path.dirname(os.path.abspath(
         configuration.settings_file(settings_path) or "."))
     path = os.path.join(directory, API_KEY_NAME)

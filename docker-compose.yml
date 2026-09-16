@@ -15,6 +15,9 @@ services:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - TZ=${TZ:-Etc/UTC}
+      # Optional. Left empty, a key is generated on the first start and kept in
+      # /config/api_key; the first log line shows the URL with it.
+      - MARQUEE_API_KEY=${MARQUEE_API_KEY:-}
     volumes:
       - ${CONFIG:-./config}:/config
       - ${DOWNLOADS:-./downloads}:/downloads

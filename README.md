@@ -69,6 +69,19 @@ Open the URL it prints. The key is stored in the browser after the first visit, 
 plain `http://localhost:8585/` works from then on; it also lives in `config/api_key`
 if you need it again. A server bound to localhost only asks for no key at all.
 
+**Where the key comes from**, in order: the `MARQUEE_API_KEY` environment variable
+if it is set (the thing to use on a NAS, where the container's log is the awkward
+place to fish it out of); otherwise `api_key` in the config volume, generated on
+the first start and kept across restarts. Change the variable and the old key stops
+working; clear it and the file's key is back in force.
+
+| Variable | Default | What it is |
+|---|---|---|
+| `PUID` / `PGID` | `1000` | The user the files should belong to |
+| `TZ` | `Etc/UTC` | Timezone, for the log |
+| `MARQUEE_API_KEY` | *(generated)* | The key the web UI asks for |
+| `MARQUEE_PORT` | `8585` | The port inside the container |
+
 Or without Docker:
 
 ```bash

@@ -1883,3 +1883,17 @@ class TestReachingTheLibrary:
             post(base, "/api/destination/test", {"copy_path": "smb://127.0.0.1:1/share/mame"})
         assert error.value.code == 400
         assert "Could not reach smb://127.0.0.1:1/share/mame" in json.loads(error.value.read())["error"]
+
+
+class TestTheKeyFromTheEnvironment:
+    def test_the_variable_wins_and_is_not_written_down(self, tmp_path, monkeypatch):
+        from marquee.web.server import api_key
+        monkeypatch.setenv("MARQUEE_API_KEY", "  from-the-nas  ")
+        assert api_key(str(tmp_path)) == "from-the-nas"
+        assert not (tmp_path / "api_key").exists()
+
+    def test_an_empty_variable_means_the_file(self, tmp_path, monkeypatch):
+        from marquee.web.server import api_key
+        monkeypatch.setenv("MARQUEE_API_KEY", "")
+        key = api_key(str(tmp_path))
+        assert key and (tmp_path / "api_key").read_text().strip() == key
