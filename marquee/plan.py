@@ -349,20 +349,24 @@ def looks_complete(path):
     return True
 
 
-def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature, incomplete=frozenset()):
+def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature, progress=None):
     """Decide what would be copied. `folder_for` maps a category to (folder, is_mature).
 
     Machines excluded by genre are still measured, so the genre breakdown reflects the
     whole romset rather than only the part currently selected.
 
-    `incomplete` is the set of source paths the download client says are still
-    arriving. It outranks what the file looks like: the client knows which pieces it
-    has, and the file on disk is the right size from the first minute.
+    `progress` is {source path: fraction downloaded} from the download client. Its
+    word outranks what the file looks like, both ways: the client knows which pieces
+    it has, and a finished file it vouches for is finished however many zeros a
+    sample of it happens to hit.
     """
-    incomplete = {os.path.normpath(path) for path in incomplete}
+    known = {os.path.normpath(path): done for path, done in (progress or {}).items()}
 
     def finished(path):
-        return os.path.normpath(path) not in incomplete and looks_complete(path)
+        done = known.get(os.path.normpath(path))
+        if done is not None:
+            return done >= 1
+        return looks_complete(path)
     plan = CopyPlan()
     seen_missing_chds = set()
     genres = {}

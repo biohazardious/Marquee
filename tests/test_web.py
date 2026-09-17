@@ -1975,16 +1975,77 @@ class TestWhatTheClientIsStillFetching:
     them out of the transfer, whatever the files on disk look like."""
 
     class Client:
-        def __init__(self, save_path, arriving):
+        def __init__(self, save_path, arriving, torrent_progress=0.4, size=200008):
             self.save_path, self.arriving = save_path, arriving
+            self.torrent_progress = torrent_progress
+            self.size = size
 
         def status(self, infohashes=None):
-            return [{"hash": "cd" + "0" * 38, "progress": 0.4,
+            return [{"hash": "cd" + "0" * 38, "progress": self.torrent_progress,
                      "save_path": self.save_path, "category": "marquee"}]
 
         def files(self, infohash):
-            return [{"index": index, "path": path, "progress": progress}
+            return [{"index": index, "path": path, "progress": progress,
+                     "size": self.size}
                     for index, (path, progress) in enumerate(self.arriving)]
+
+        def properties(self, infohash):
+            return {"piece_size": 4096}
+
+        def piece_hashes(self, infohash):
+            return getattr(self, "hashes", [])
+
+    def test_a_deselected_file_in_a_finished_torrent_still_counts(self, server, romset):
+        """A torrent reads 100% once its unwanted files are deselected. The disk at
+        96% that narrow() dropped because the library 'had' it is exactly the one
+        that must not be copied -- and it was."""
+        base, app = server
+        chd_dir = romset["chd_dir"]
+        app.client = lambda overrides=None: self.Client(
+            str(chd_dir.parent), [("chds/twodisk/ok.chd", 0.96)], torrent_progress=1.0)
+        post(base, "/api/save", {"download_client": "http://client:1", "download_dir": str(chd_dir.parent)})
+        assert app.source_progress() == {str(chd_dir / "twodisk" / "ok.chd"): 0.96}
+        assert app.incomplete_sources() == {str(chd_dir / "twodisk" / "ok.chd")}
+
+    def test_a_deep_check_hashes_disks_against_the_torrent(self, server, romset, xml_path,
+                                                           catlist_path):
+        import hashlib
+        base, app = server
+        chd_dir = romset["chd_dir"]
+        size = (chd_dir / "twodisk" / "ok.chd").stat().st_size
+        client = self.Client(str(chd_dir.parent), [("chds/twodisk/ok.chd", 1.0)],
+                             torrent_progress=1.0, size=size)
+        app.client = lambda overrides=None: client
+        post(base, "/api/save", {"download_client": "http://client:1", "download_dir": str(chd_dir.parent)})
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        post(base, "/api/copy", {})
+        wait_for(app.job, "done", "error")
+        item = next(one for one in app.job.plan.wanted if one.name == "twodisk")
+        library = romset["out_dir"] / item.folder / "twodisk" / "ok.chd"
+        assert library.is_file()
+        # The torrent's piece hashes are those of what is in the library -- except the
+        # library copy is then given one wrong piece.
+        good = library.read_bytes()
+        assert len(good) == size
+        client.properties = lambda infohash: {"piece_size": 64}
+        padded = good + b"\x00" * (-len(good) % 64)
+        client.hashes = [hashlib.sha1(padded[i:i + 64]).hexdigest()
+                         for i in range(0, len(padded), 64)]
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        answer = post(base, "/api/check", {"deep": True})
+        assert answer["deep"] is True
+        wait_for(app.job, "planned", "error")
+        assert app.job.checked.get("damaged", 0) == 0
+        bad = bytearray(good)
+        bad[300:310] = b"\x00" * 10
+        library.write_bytes(bytes(bad))
+        post(base, "/api/check", {"deep": True})
+        wait_for(app.job, "planned", "error")
+        assert app.job.checked.get("damaged") == 1
+        item = next(one for one in app.job.plan.wanted if one.name == "twodisk")   # re-planned since
+        assert item.damaged_disks == [f"{item.folder}/twodisk/ok.chd"]
 
     def test_arriving_files_are_mapped_into_this_apps_paths(self, server, romset):
         base, app = server

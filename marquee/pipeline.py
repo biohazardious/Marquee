@@ -36,9 +36,9 @@ class SourceOptions:
     search_dirs: tuple = ()
     # Index the destination so the run can tell new from changed from already-there.
     compare_destination: bool = True
-    # A callable returning the source paths the download client says are still
-    # arriving, or None. The web app supplies it; the command line has no client.
-    incomplete_paths: object = None
+    # A callable returning {source path: fraction downloaded} from the download
+    # client, or None. The web app supplies it; the command line has no client.
+    source_progress: object = None
 
     def hints(self, config):
         found = [os.path.join(PROJECT_ROOT, "MameFiles"), PROJECT_ROOT]
@@ -316,19 +316,20 @@ def build_plan(config, options=None, reporter=None):
                           f"directly in {given}.")
     resolution.rom_dir, resolution.chd_dir = rom_dir, chd_dir
 
-    incomplete = set()
-    if options.incomplete_paths:
+    progress = {}
+    if options.source_progress:
         try:
-            incomplete = set(options.incomplete_paths() or ())
+            progress = dict(options.source_progress() or {})
         except Exception as error:  # noqa: BLE001 -- a client that will not answer
             reporter.warn(f"Could not ask the download client what is still arriving: "
                           f"{error}")
-        if incomplete:
-            reporter.info(f"{len(incomplete):,} files are still arriving in the download "
+        arriving = sum(1 for done in progress.values() if done < 1)
+        if arriving:
+            reporter.info(f"{arriving:,} files are still arriving in the download "
                           f"client and will not be copied yet.")
     built = planning.build(mame_list, rom_dir, chd_dir,
                            catalog.folder_namer(config), config.allow_mature,
-                           incomplete=incomplete)
+                           progress=progress)
     built.left_out = _left_out(rejects, catlist, config, rom_dir, chd_dir, reporter)
 
     if options.compare_destination:

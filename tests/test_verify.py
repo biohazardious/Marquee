@@ -237,18 +237,23 @@ class TestReadingThroughAnOpener:
 
 class TestADiskInTheLibrary:
     """A transfer that copied a disk before the download finished leaves a CHD-sized
-    run of zeros with a real header. Sizes cannot tell; the check has to."""
+    run of zeros with a real header. Sizes cannot tell; the check has to -- and it
+    has to prove it, because genuine CHDs carry runs of zeros too: two of 305 on the
+    library this was found on, and calling those damaged would have had every
+    transfer replace them and every check say it again."""
+
+    def good(self, tmp_path, name="ok.chd", size=200000):
+        path = tmp_path / name
+        path.write_bytes(b"MComprHD" + (bytes(range(256)) * (size // 256 + 1))[:size])
+        return path
+
+    def zeros(self, tmp_path, name="zeros.chd", size=200000):
+        path = tmp_path / name
+        path.write_bytes(b"MComprHD" + b"\x00" * size)
+        return path
 
     def test_a_whole_disk_is_current(self, tmp_path):
-        path = tmp_path / "ok.chd"
-        path.write_bytes(b"MComprHD" + b"c" * 200000)
-        assert verify.check_disk(str(path)) == (verify.CURRENT, [])
-
-    def test_a_zero_filled_disk_is_damaged(self, tmp_path):
-        path = tmp_path / "zeros.chd"
-        path.write_bytes(b"MComprHD" + b"\x00" * 200000)
-        state, detail = verify.check_disk(str(path))
-        assert state == verify.DAMAGED and "zero-filled" in detail[0]
+        assert verify.check_disk(str(self.good(tmp_path))) == (verify.CURRENT, [])
 
     def test_something_that_is_not_a_chd_is_damaged(self, tmp_path):
         path = tmp_path / "not.chd"
@@ -258,16 +263,68 @@ class TestADiskInTheLibrary:
     def test_a_disk_that_is_not_there(self, tmp_path):
         assert verify.check_disk(str(tmp_path / "nope.chd")) == (verify.ABSENT, [])
 
+    def test_zeros_alone_prove_nothing(self, tmp_path):
+        """No finished source and no piece hashes: a zero run is left alone."""
+        assert verify.check_disk(str(self.zeros(tmp_path))) == (verify.CURRENT, [])
+
+    def test_zeros_the_finished_source_does_not_have_are_damage(self, tmp_path):
+        zeros = self.zeros(tmp_path)
+        source = self.good(tmp_path, "source.chd")
+        state, detail = verify.check_disk(str(zeros), source=str(source))
+        assert state == verify.DAMAGED and "finished download" in detail[0]
+
+    def test_zeros_the_finished_source_has_too_are_genuine(self, tmp_path):
+        zeros = self.zeros(tmp_path)
+        same = self.zeros(tmp_path, "source.chd")
+        assert verify.check_disk(str(zeros), source=str(same)) == (verify.CURRENT, [])
+
+    def test_a_source_of_another_size_is_not_compared(self, tmp_path):
+        zeros = self.zeros(tmp_path)
+        other = self.good(tmp_path, "source.chd", size=100000)
+        assert verify.check_disk(str(zeros), source=str(other)) == (verify.CURRENT, [])
+
     def test_it_reads_through_an_opener_too(self, tmp_path):
-        path = tmp_path / "zeros.chd"
-        path.write_bytes(b"MComprHD" + b"\x00" * 200000)
+        zeros = self.zeros(tmp_path)
+        source = self.good(tmp_path, "source.chd")
         opened = []
 
         def opener(relpath):
             opened.append(relpath)
-            return open(path, "rb")
-        assert verify.check_disk("Genre/x/zeros.chd", opener)[0] == verify.DAMAGED
+            return open(zeros, "rb")
+        state, _ = verify.check_disk("Genre/x/zeros.chd", opener, source=str(source))
+        assert state == verify.DAMAGED
         assert opened == ["Genre/x/zeros.chd"]
+
+    def pieces_for(self, data, offset, piece):
+        import hashlib
+        stream = b"\x00" * offset + data
+        stream += b"\x00" * (-len(stream) % piece)
+        return [hashlib.sha1(stream[i:i + piece]).hexdigest()
+                for i in range(0, len(stream), piece)]
+
+    def test_piece_hashes_prove_a_disk_genuine(self, tmp_path):
+        good = self.good(tmp_path)
+        data = good.read_bytes()
+        hashes = self.pieces_for(data, 1000, 4096)
+        assert verify.check_disk(str(good), pieces=(1000, 4096, hashes)) == (verify.CURRENT, [])
+        # Even one of zeros the sampler would trip on.
+        zeros = self.zeros(tmp_path)
+        hashes = self.pieces_for(zeros.read_bytes(), 0, 4096)
+        assert verify.check_disk(str(zeros), pieces=(0, 4096, hashes)) == (verify.CURRENT, [])
+
+    def test_piece_hashes_catch_a_single_wrong_piece(self, tmp_path):
+        good = self.good(tmp_path)
+        data = bytearray(good.read_bytes())
+        hashes = self.pieces_for(bytes(data), 1000, 4096)
+        data[100000:100010] = b"\x00" * 10
+        good.write_bytes(bytes(data))
+        state, detail = verify.check_disk(str(good), pieces=(1000, 4096, hashes))
+        assert state == verify.DAMAGED and "piece hashes" in detail[0]
+
+    def test_a_file_smaller_than_a_piece_falls_back(self, tmp_path):
+        zeros = self.zeros(tmp_path)
+        assert verify.verify_pieces(open(zeros, "rb"), 200008, 100, 1 << 20, ["x"]) is None
+        assert verify.check_disk(str(zeros), pieces=(100, 1 << 20, ["x"])) == (verify.CURRENT, [])
 
     def test_the_library_check_names_the_damaged_disk(self, tmp_path, categorised, config,
                                                       romset):
@@ -277,11 +334,13 @@ class TestADiskInTheLibrary:
                                catalog.folder_namer(config), config.allow_mature)
         item = next(one for one in built.items if one.name == "twodisk")
         root = romset["out_dir"]
+        relpath = f"{item.folder}/twodisk/ok.chd"
         (root / item.folder / "twodisk").mkdir(parents=True)
         (root / item.folder / "twodisk" / "ok.chd").write_bytes(b"MComprHD" + b"\x00" * 200000)
-        counts = verify.check_library([item], {}, str(root))
+        source = self.good(tmp_path, "src.chd")
+        counts = verify.check_library([item], {}, str(root), sources={relpath: str(source)})
         assert counts == {verify.DAMAGED: 1}
-        assert item.damaged_disks == [f"{item.folder}/twodisk/ok.chd"]
+        assert item.damaged_disks == [relpath]
         assert any("ok.chd: zero-filled" in line for line in item.state_detail)
 
     def test_a_disk_on_its_way_to_a_new_folder_is_checked_where_it_is(self, tmp_path,
@@ -294,8 +353,9 @@ class TestADiskInTheLibrary:
         item = next(one for one in built.items if one.name == "twodisk")
         root = romset["out_dir"]
         (root / "Old" / "twodisk").mkdir(parents=True)
-        (root / "Old" / "twodisk" / "ok.chd").write_bytes(b"MComprHD" + b"c" * 200000)
+        (root / "Old" / "twodisk" / "ok.chd").write_bytes(b"x" * 100)   # not a CHD at all
+        relpath = f"{item.folder}/twodisk/ok.chd"
         counts = verify.check_library([item], {}, str(root),
-                                      moved={f"{item.folder}/twodisk/ok.chd": "Old/twodisk/ok.chd"})
-        assert item.damaged_disks == []
-        assert verify.DAMAGED not in counts
+                                      moved={relpath: "Old/twodisk/ok.chd"})
+        assert item.damaged_disks == [relpath]
+        assert counts == {verify.DAMAGED: 1}

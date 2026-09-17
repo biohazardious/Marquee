@@ -10,6 +10,7 @@ The check is exact and costs nothing but disk: a zip's central directory lists e
 entry's name and CRC-32 without unpacking a byte. About 9 ms for a typical ROM zip,
 so a 11,797-file library is checked in under two minutes.
 """
+import hashlib
 import os
 import zipfile
 
@@ -103,40 +104,89 @@ def check(path, expected, opener=None):
 
 
 CHD_MAGIC = b"MComprHD"
-# How a file still arriving is told from a finished one, beyond its first and last
-# bytes. A torrent client fetches the first and last pieces early -- that is what
-# makes a video previewable -- so a 14 GB disk at 0.4% already carried its header,
-# and it was copied to the library as fourteen gigabytes of zeros. Eight small reads
-# spread over the body, plus the tail: a piece that has not arrived is zeros, and a
-# compressed stream is never zeros for four kilobytes at a stretch. On the library
-# this was found on, 34 of 305 disks tripped it and every one that could be checked
-# against the torrent's piece hashes was indeed wrong; none was a false alarm.
+# Where a file is sampled for runs of zeros. A torrent client fetches the first and
+# last pieces early -- that is what makes a video previewable -- so a 14 GB disk at
+# 0.4% already carried its header, and it was copied to the library as fourteen
+# gigabytes of zeros. Eight small reads spread over the body, plus the tail, find a
+# piece that has not arrived. A zero run alone is not proof, though: genuine CHDs
+# carry them too (2 of 305 on the library this was found on), so a sample is only
+# ever held against something -- the finished download, or the torrent's own piece
+# hashes.
 SAMPLE_BYTES = 4096
 SAMPLES = 8
 TAIL_BYTES = 65536
+COMPARE_BYTES = 65536
 
 
-def body_has_data(handle, size):
-    """False when a sample of the body, or the tail, is nothing but zeros."""
+def zero_samples(handle, size):
+    """Offsets of the samples that are nothing but zeros."""
     if size <= SAMPLE_BYTES * 4:
-        return True
+        return []
     positions = [size - min(TAIL_BYTES, size)]
     positions += [int(size * (index + 0.5) / SAMPLES) for index in range(SAMPLES)]
+    found = []
     for position in positions:
         handle.seek(position)
         chunk = handle.read(min(SAMPLE_BYTES, size - position))
         if chunk and not chunk.strip(b"\x00"):
+            found.append(position)
+    return found
+
+
+def body_has_data(handle, size):
+    """False when a sample of the body, or the tail, is nothing but zeros."""
+    return not zero_samples(handle, size)
+
+
+def verify_pieces(handle, size, offset, piece_size, hashes):
+    """Hash every whole torrent piece that lies inside this file against `hashes`.
+
+    True when they all match, False on the first that does not, None when no whole
+    piece lies inside (a file smaller than a piece, or straddling two). `offset` is
+    where the file starts in the torrent's byte stream.
+    """
+    if not piece_size or not hashes:
+        return None
+    first = -(-offset // piece_size)
+    last = (offset + size) // piece_size
+    if last <= first:
+        return None
+    for index in range(first, last):
+        if index >= len(hashes):
+            return None
+        handle.seek(index * piece_size - offset)
+        data = handle.read(piece_size)
+        if len(data) != piece_size or hashlib.sha1(data).hexdigest() != hashes[index]:
             return False
     return True
 
 
-def check_disk(path, opener=None):
+def _same_bytes(handle, source, positions, size):
+    """Whether the library file and its finished source agree at these offsets."""
+    with open(source, "rb") as other:
+        for position in positions:
+            length = min(COMPARE_BYTES, size - position)
+            handle.seek(position)
+            other.seek(position)
+            if handle.read(length) != other.read(length):
+                return False
+    return True
+
+
+def check_disk(path, opener=None, source=None, pieces=None):
     """(state, [what is wrong]) for one disk in the library.
 
     No release CRC to hold it against -- a CHD's checksum covers the decompressed
     image, which nothing here is going to read -- so the question is the narrower
     one: is this a whole CHD, or the right-sized run of zeros a transfer left when
     it copied a disk the download client had not finished?
+
+    With `pieces` = (offset, piece size, hashes) from the torrent the disk came from,
+    the answer is exact. Otherwise a zero-filled sample is held against `source`, the
+    finished copy in the download folder: the same bytes there means the disk is
+    genuinely like that. With neither, a zero run proves nothing and the disk is
+    left alone -- a false "damaged" would have the next transfer replace a good file,
+    and the check after that say it again.
     """
     try:
         handle = open(path, "rb") if opener is None else opener(path)
@@ -151,15 +201,26 @@ def check_disk(path, opener=None):
             handle.seek(0)
             if handle.read(len(CHD_MAGIC)) != CHD_MAGIC:
                 return (DAMAGED, ["not a CHD"])
-            if not body_has_data(handle, size):
-                return (DAMAGED, ["zero-filled: copied before it had finished downloading"])
+            if pieces:
+                verdict = verify_pieces(handle, size, *pieces)
+                if verdict is False:
+                    return (DAMAGED, ["does not match the download's piece hashes"])
+                if verdict is True:
+                    return (CURRENT, [])
+            zeros = zero_samples(handle, size)
+            if not zeros:
+                return (CURRENT, [])
+            if source and os.path.isfile(source) and os.path.getsize(source) == size:
+                if not _same_bytes(handle, source, zeros, size):
+                    return (DAMAGED, ["zero-filled where the finished download is not: "
+                                      "copied before it had finished downloading"])
     except OSError as error:
         return (DAMAGED, [str(error)])
     return (CURRENT, [])
 
 
 def check_library(items, manifests, root, reporter=None, should_continue=None,
-                  where=None, opener=None, moved=None):
+                  where=None, opener=None, moved=None, sources=None, pieces=None):
     """Check every machine in `items` against the release, in place.
 
     Sets `state` and `state_detail` on each item and returns {state: count}. Stopping
@@ -173,13 +234,18 @@ def check_library(items, manifests, root, reporter=None, should_continue=None,
     `opener` the files are read through it by their library-relative path, and `root`
     is not used: that is a library on a share.
 
-    Disks are looked at too, for the one fault a transfer can leave in them: a whole
-    file of zeros. A damaged disk makes the machine `damaged` and is named in
-    `damaged_disks`, which is what makes the next transfer replace it.
+    Disks are looked at too, for the one fault a transfer can leave in them: a file
+    copied before the download had finished. `sources` maps a disk's library path to
+    its finished copy in the download folder and `pieces` to (offset, piece size,
+    hashes) in the torrent it came from; see `check_disk` for what each proves. A
+    damaged disk makes the machine `damaged` and is named in `damaged_disks`, which
+    is what makes the next transfer replace it.
     """
     reporter = reporter or Reporter()
     where = where or {}
     moved = moved or {}
+    sources = sources or {}
+    pieces = pieces or {}
     counts = {}
     total = len(items)
     for position, item in enumerate(items, 1):
@@ -194,7 +260,9 @@ def check_library(items, manifests, root, reporter=None, should_continue=None,
         for relpath in disks:
             current = moved.get(relpath, relpath)
             disk_path = current if opener else os.path.join(root, current.replace("/", os.sep))
-            disk_state, disk_detail = check_disk(disk_path, opener)
+            disk_state, disk_detail = check_disk(disk_path, opener,
+                                                 source=sources.get(relpath),
+                                                 pieces=pieces.get(relpath))
             if disk_state == DAMAGED:
                 item.damaged_disks.append(relpath)
                 name = os.path.basename(relpath)

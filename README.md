@@ -524,13 +524,18 @@ A torrent client fetches the first and last pieces of a file early, so a 14 GB d
 to take either as proof the file was finished and copied it into the library as zeros
 of exactly the right size, which the size-based comparison would never question again.
 
-Since 0.5.1 a plan samples the body of every source file and, when a download client
-is configured, asks it which files are still arriving; those wait, marked *partial*,
-until the next plan. If a transfer ran against a half-fetched set before this, run
-**Check the library**: it now opens every disk as well as every zip, calls a
-zero-filled disk *damaged*, and the next transfer replaces it from the finished
-download. A single missing piece inside an otherwise complete disk is beyond what
-sampling can see; only the download client's own piece hashes can tell that.
+Since 0.5.1 a plan asks the download client, file by file, what is still arriving
+(a torrent reads 100% once its unwanted files are deselected, so a disk deselected at
+96% is exactly the one to ask about); those wait, marked *partial*, until the next
+plan. Without a client, the body of each source file is sampled for runs of zeros.
+
+If a transfer ran against a half-fetched set before this, run **Check the library**.
+It opens every disk as well as every zip. A zero-filled sample is held against the
+finished copy in the download folder — the same bytes there mean the disk is
+genuinely like that, since real CHDs carry runs of zeros too — and a disk that
+differs is *damaged*, which the next transfer replaces. **Deep check** goes further:
+it reads every disk in full and hashes it against the torrent's own piece hashes,
+which is the one exact answer, at the cost of reading the whole library once.
 
 ### The library is lighter than the selection says, and the Wanted page shows nothing
 

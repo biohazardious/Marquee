@@ -514,6 +514,18 @@ class TestAFileStillArriving:
         path.write_bytes(ROM_BYTES)
         assert CopyPlan.looks_complete(str(path)) is True
 
+    def test_a_finished_file_the_client_vouches_for_is_finished(self, categorised, config,
+                                                                 romset):
+        """Genuine CHDs carry runs of zeros too; the client's word beats the sample."""
+        disk = romset["chd_dir"] / "twodisk" / "ok.chd"
+        disk.write_bytes(b"MComprHD" + b"\x00" * 200000)
+        assert not CopyPlan.looks_complete(str(disk))
+        built = CopyPlan.build(categorised, config.rom_dir, config.chd_dir,
+                               catalog.folder_namer(config), config.allow_mature,
+                               progress={str(disk): 1.0})
+        twodisk = next(item for item in built.items if item.name == "twodisk")
+        assert twodisk.partial is False and twodisk.chd_sources == [str(disk)]
+
     def test_what_the_client_says_is_arriving_outranks_the_file(self, categorised, config,
                                                                  romset):
         """The client knows which pieces it has; the file cannot be trusted at 95%."""
@@ -521,7 +533,8 @@ class TestAFileStillArriving:
         assert CopyPlan.looks_complete(str(disk))
         built = CopyPlan.build(categorised, config.rom_dir, config.chd_dir,
                                catalog.folder_namer(config), config.allow_mature,
-                               incomplete={str(disk), str(romset["rom_dir"] / "goodgame.zip")})
+                               progress={str(disk): 0.96,
+                                         str(romset["rom_dir"] / "goodgame.zip"): 0.5})
         twodisk = next(item for item in built.items if item.name == "twodisk")
         assert twodisk.partial is True and twodisk.chd_sources == []
         assert "ok" in twodisk.missing_disks

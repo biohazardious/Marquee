@@ -407,6 +407,16 @@ class QBittorrent:
     def properties(self, infohash):
         return self._json("torrents/properties", {"hash": infohash})
 
+    def piece_hashes(self, infohash):
+        """The torrent's SHA-1 per piece, lowercase hex, in order -- or [] if the
+        client will not say. What makes a file in the library provable: hash the
+        pieces that lie inside it and compare."""
+        try:
+            raw = self._json("torrents/pieceHashes", {"hash": infohash})
+        except QBittorrentError:
+            return []
+        return [str(entry).lower() for entry in raw] if isinstance(raw, list) else []
+
     def export(self, infohash):
         """The .torrent file itself, so a file list can be cached without peers."""
         return self._request("torrents/export", {"hash": infohash}, raw=True)

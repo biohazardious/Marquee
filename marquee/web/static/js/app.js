@@ -137,6 +137,18 @@ function libraryCheck(data) {
     button.disabled = true;
     try { await api.post('/api/check', {}); } catch (error) { banner(error.message, 'bad'); }
   };
+  /* The deep check reads every disk in full and hashes it against the torrent's own
+     piece hashes: the one exact answer to "was this copied before it finished". It
+     needs the download client and takes as long as reading the library does. */
+  const deep = el('button', {
+    class: 'btn sm', disabled: busy || !data.plan || !(data.config || {}).download_client,
+    text: 'Deep check',
+    title: 'Hash every disk against the torrent it came from (reads the whole library)',
+  });
+  deep.onclick = async () => {
+    deep.disabled = true;
+    try { await api.post('/api/check', { deep: true }); } catch (error) { banner(error.message, 'bad'); }
+  };
 
   const rows = found && Object.keys(found).length
     ? el('table', { class: 'grid' }, el('tbody', {},
@@ -151,11 +163,13 @@ function libraryCheck(data) {
   return el('div', { class: 'panel' },
     el('h2', {}, 'The library itself',
       el('span', { class: 'sub', text: 'is what is there still the right file?' }),
-      el('span', { class: 'spacer' }), button),
+      el('span', { class: 'spacer' }), deep, button),
     el('div', { class: 'body tight' },
       rows,
       el('div', { class: 'hint', text: rows
-        ? 'Each zip was read and its ROMs compared with the release, entry by entry. '
+        ? 'Each zip was read and its ROMs compared with the release, entry by entry; '
+          + 'each disk was opened and, where a finished download or the torrent\u2019s '
+          + 'piece hashes were there to compare against, held to them. '
           + 'Anything out of date counts as something to fetch.'
         : 'Nothing has looked inside the files yet. Until something does, a game '
           + 'counts as present because a file with its name is there \u2014 which says '

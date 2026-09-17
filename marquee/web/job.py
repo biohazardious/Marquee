@@ -4,6 +4,7 @@ The pipeline already reports through a Reporter and separates planning from copy
 this is only bookkeeping: run the work on a thread, collect events, and expose a
 snapshot the page can render.
 """
+import os
 import threading
 import traceback
 
@@ -141,7 +142,7 @@ class Job:
 
         self._start(work, "planning", "planned", prepare=prepare)
 
-    def start_check(self, xml_file):
+    def start_check(self, xml_file, deep=False, pieces=None):
         """Check what the library holds against the release it is supposed to be.
 
         A separate job rather than part of planning: it reads every zip in the library
@@ -202,19 +203,46 @@ class Job:
             # A file the next run is going to relocate is not where it belongs yet.
             # Checking only the destination path reported 871 of those as absent when
             # every one of them was sitting a folder away.
-            where, moved = {}, {}
+            where, moved, sizes = {}, {}, {}
             if plan.sync is not None:
                 for action in plan.sync.actions:
+                    if action.size and action.kind in (sync.KEEP, sync.UPDATE, sync.MOVE):
+                        sizes[action.relpath] = action.size
                     if action.kind != sync.MOVE:
                         continue
                     if action.machine and action.relpath.endswith(".zip"):
                         where[action.machine] = action.from_relpath
                     elif action.relpath.endswith(".chd"):
                         moved[action.relpath] = action.from_relpath
+            # A disk's finished copy in the download folder, to hold a zero-filled
+            # sample against. Only finished ones are in chd_sources at all.
+            disk_sources = {}
+            for item in here:
+                by_name = {os.path.basename(path).lower(): path for path in item.chd_sources}
+                for relpath in list(item.wanted_paths())[1:]:
+                    source = by_name.get(os.path.basename(relpath).lower())
+                    if source:
+                        disk_sources[relpath] = source
+            by_relpath = {}
+            if deep and pieces is not None:
+                reporter.stage("Reading the torrents' piece hashes...")
+                try:
+                    table = pieces() or {}
+                except MarqueeError as error:
+                    table = {}
+                    reporter.warn(f"Could not read piece hashes from the download "
+                                  f"client: {error}")
+                for item in here:
+                    for relpath in list(item.wanted_paths())[1:]:
+                        key = (os.path.basename(relpath).lower(), sizes.get(relpath))
+                        if key in table:
+                            by_relpath[relpath] = table[key]
+                reporter.info(f"{len(by_relpath):,} disks can be hashed against their "
+                              f"torrent; this reads every one of them in full.")
             counts = verify.check_library(
                 here, manifests, config.copy_path, reporter,
                 should_continue=lambda: not self._cancel.is_set(), where=where,
-                opener=opener, moved=moved)
+                opener=opener, moved=moved, sources=disk_sources, pieces=by_relpath)
             with self._lock:
                 self.checked = counts
                 # On the plan as well: the page's description of it is memoised, and

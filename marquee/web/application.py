@@ -1137,54 +1137,102 @@ class Application:
             fetch_support_files=bool(body.get("fetch_support_files")),
             ignore_version_mismatch=bool(body.get("ignore_version_mismatch")),
             refresh_cache=bool(body.get("refresh_cache")),
-            incomplete_paths=lambda: self.incomplete_sources(config))
+            source_progress=lambda: self.source_progress(config))
         self.job.start_plan(config, options)
         return {"started": "plan"}
 
-    def incomplete_sources(self, config=None):
-        """Source paths the download client is still fetching, as this app sees them.
+    def _torrent_files(self, config):
+        """[(torrent status entry, [(this app's path, file record)])] for every torrent
+        in the client, whoever added it. Read-only.
 
-        Read-only, every torrent in the client, whoever added it. The client knows
-        which pieces it has; the file on disk is the right size from the first minute
-        and carries its header early, so this is the check that cannot be fooled.
-        Empty when there is no client or it does not answer -- the plan then falls
-        back to reading the files.
+        A file is named from the client's save path down, and its first part is the
+        torrent's own folder -- which is what `locate` can find by name under this
+        app's download folder when no mapping says where the client's path lands.
         """
-        config = config or self.current_config()
         if not config.download_client:
-            return set()
+            return []
         try:
             client = self.client()
             entries = client.status()
         except MarqueeError:
-            return set()
+            return []
         mappings = acquisition.parse_mappings(config.remote_path_mappings)
-        found = set()
+        out = []
         for entry in entries:
             infohash = entry.get("hash")
-            if not infohash or entry.get("progress", 0) >= 1:
+            if not infohash:
                 continue
             try:
                 files = client.files(infohash)
             except MarqueeError:
                 continue
             save_path = entry.get("save_path") or ""
-            roots = {}
+            roots, named = {}, []
             for record in files:
-                if record.get("progress", 0) >= 1:
-                    continue
-                # A file is named from the client's save path down, and its first
-                # part is the torrent's own folder -- which is what `locate` can find
-                # by name under this app's download folder when no mapping says
-                # where the client's path lands here.
                 head, _, tail = record["path"].replace("\\", "/").partition("/")
                 if head not in roots:
                     roots[head] = acquisition.locate(
                         posixpath.join(save_path, head) if save_path else head,
                         mappings, config.download_dir)
-                found.add(os.path.normpath(os.path.join(roots[head], tail) if tail
-                                           else roots[head]))
-        return found
+                path = os.path.join(roots[head], tail) if tail else roots[head]
+                named.append((os.path.normpath(path), record))
+            out.append((entry, named))
+        return out
+
+    def source_progress(self, config=None):
+        """{source path: fraction downloaded} for every file the client knows.
+
+        The client knows which pieces it has; the file on disk is the right size from
+        the first minute and carries its header early, so this is the check that
+        cannot be fooled. Every file of every torrent, not just the unfinished
+        torrents: a torrent reads 100% once its unwanted files are deselected, and a
+        disk deselected at 96% is exactly the one that must not be copied. Empty when
+        there is no client or it does not answer -- the plan then reads the files.
+        """
+        config = config or self.current_config()
+        progress = {}
+        for _entry, named in self._torrent_files(config):
+            for path, record in named:
+                progress[path] = float(record.get("progress", 0) or 0)
+        return progress
+
+    def incomplete_sources(self, config=None):
+        """Source paths the download client is still fetching."""
+        return {path for path, done in self.source_progress(config).items() if done < 1}
+
+    def disk_pieces(self, config=None):
+        """{(file name lower, size): (offset in torrent, piece size, [piece sha1])} for
+        every .chd the client's torrents carry -- what a deep library check hashes
+        against. Piece hashes are asked for once per torrent that has disks."""
+        config = config or self.current_config()
+        if not config.download_client:
+            return {}
+        try:
+            client = self.client()
+        except MarqueeError:
+            return {}
+        out = {}
+        for entry, named in self._torrent_files(config):
+            records = [record for _path, record in named]
+            if not any(str(record.get("path", "")).lower().endswith(".chd")
+                       for record in records):
+                continue
+            try:
+                piece = int((client.properties(entry["hash"]) or {}).get("piece_size") or 0)
+            except (MarqueeError, TypeError, ValueError):
+                piece = 0
+            hashes = client.piece_hashes(entry["hash"]) if piece else []
+            if not hashes:
+                continue
+            offset = 0
+            for record in sorted(records, key=lambda one: one.get("index", 0)):
+                size = int(record.get("size") or 0)
+                name = str(record.get("path", "")).replace("\\", "/").rsplit("/", 1)[-1]
+                key = (name.lower(), size)
+                if name.lower().endswith(".chd") and key not in out:
+                    out[key] = (offset, piece, hashes)
+                offset += size
+        return out
 
     def check(self, _body=None):
         """Check the library against the release, rather than trusting the filenames.
@@ -1195,8 +1243,11 @@ class Application:
         """
         resolution = self.job.resolution
         xml_file = getattr(resolution, "xml_file", None)
-        self.job.start_check(xml_file)
-        return {"started": "check"}
+        deep = bool((_body or {}).get("deep"))
+        config = self.current_config()
+        self.job.start_check(xml_file, deep=deep,
+                             pieces=(lambda: self.disk_pieces(config)) if deep else None)
+        return {"started": "check", "deep": deep}
 
     def copy(self, body):
         if self.job.plan is None:
