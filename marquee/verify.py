@@ -102,8 +102,64 @@ def check(path, expected, opener=None):
     return (CURRENT, [])
 
 
+CHD_MAGIC = b"MComprHD"
+# How a file still arriving is told from a finished one, beyond its first and last
+# bytes. A torrent client fetches the first and last pieces early -- that is what
+# makes a video previewable -- so a 14 GB disk at 0.4% already carried its header,
+# and it was copied to the library as fourteen gigabytes of zeros. Eight small reads
+# spread over the body, plus the tail: a piece that has not arrived is zeros, and a
+# compressed stream is never zeros for four kilobytes at a stretch. On the library
+# this was found on, 34 of 305 disks tripped it and every one that could be checked
+# against the torrent's piece hashes was indeed wrong; none was a false alarm.
+SAMPLE_BYTES = 4096
+SAMPLES = 8
+TAIL_BYTES = 65536
+
+
+def body_has_data(handle, size):
+    """False when a sample of the body, or the tail, is nothing but zeros."""
+    if size <= SAMPLE_BYTES * 4:
+        return True
+    positions = [size - min(TAIL_BYTES, size)]
+    positions += [int(size * (index + 0.5) / SAMPLES) for index in range(SAMPLES)]
+    for position in positions:
+        handle.seek(position)
+        chunk = handle.read(min(SAMPLE_BYTES, size - position))
+        if chunk and not chunk.strip(b"\x00"):
+            return False
+    return True
+
+
+def check_disk(path, opener=None):
+    """(state, [what is wrong]) for one disk in the library.
+
+    No release CRC to hold it against -- a CHD's checksum covers the decompressed
+    image, which nothing here is going to read -- so the question is the narrower
+    one: is this a whole CHD, or the right-sized run of zeros a transfer left when
+    it copied a disk the download client had not finished?
+    """
+    try:
+        handle = open(path, "rb") if opener is None else opener(path)
+    except FileNotFoundError:
+        return (ABSENT, [])
+    except OSError as error:
+        return (DAMAGED, [str(error)])
+    try:
+        with handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(0)
+            if handle.read(len(CHD_MAGIC)) != CHD_MAGIC:
+                return (DAMAGED, ["not a CHD"])
+            if not body_has_data(handle, size):
+                return (DAMAGED, ["zero-filled: copied before it had finished downloading"])
+    except OSError as error:
+        return (DAMAGED, [str(error)])
+    return (CURRENT, [])
+
+
 def check_library(items, manifests, root, reporter=None, should_continue=None,
-                  where=None, opener=None):
+                  where=None, opener=None, moved=None):
     """Check every machine in `items` against the release, in place.
 
     Sets `state` and `state_detail` on each item and returns {state: count}. Stopping
@@ -113,11 +169,17 @@ def check_library(items, manifests, root, reporter=None, should_continue=None,
     `where` names the file's current location for machines that are not at the path
     they belong at yet -- a library built to an older layout holds them one folder
     out, and looking only where they are *going* reports a file that is right there as
-    absent. With an `opener` the files are read through it by their library-relative
-    path, and `root` is not used: that is a library on a share.
+    absent. `moved` does the same for disks, by library-relative path. With an
+    `opener` the files are read through it by their library-relative path, and `root`
+    is not used: that is a library on a share.
+
+    Disks are looked at too, for the one fault a transfer can leave in them: a whole
+    file of zeros. A damaged disk makes the machine `damaged` and is named in
+    `damaged_disks`, which is what makes the next transfer replace it.
     """
     reporter = reporter or Reporter()
     where = where or {}
+    moved = moved or {}
     counts = {}
     total = len(items)
     for position, item in enumerate(items, 1):
@@ -127,6 +189,17 @@ def check_library(items, manifests, root, reporter=None, should_continue=None,
         here = where.get(item.name) or f"{item.folder}/{item.name}.zip"
         path = here if opener else os.path.join(root, here.replace("/", os.sep))
         state, detail = check(path, manifests.get(item.name), opener)
+        item.damaged_disks = []
+        disks = list(item.wanted_paths())[1:] if hasattr(item, "wanted_paths") else []
+        for relpath in disks:
+            current = moved.get(relpath, relpath)
+            disk_path = current if opener else os.path.join(root, current.replace("/", os.sep))
+            disk_state, disk_detail = check_disk(disk_path, opener)
+            if disk_state == DAMAGED:
+                item.damaged_disks.append(relpath)
+                name = os.path.basename(relpath)
+                detail = list(detail) + [f"{name}: {why}" for why in disk_detail]
+                state = DAMAGED
         item.state, item.state_detail = state, detail
         counts[state] = counts.get(state, 0) + 1
         if position % 200 == 0 or position == total:

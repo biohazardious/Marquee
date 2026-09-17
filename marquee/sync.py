@@ -88,11 +88,15 @@ def _owners(plan):
 def _known_wrong(item, relpath):
     """Has something read this file and found it is not what the release says?
 
-    Only the machine's own zip: `state` comes from checking that archive, and says
-    nothing about the disks beside it.
+    The machine's own zip, which `state` speaks for, and any disk the check found
+    zero-filled: a disk copied before the download finished is the right size and
+    would otherwise be kept for ever.
     """
-    return (item is not None and item.state in REPLACE_STATES
-            and relpath == f"{item.folder}/{item.name}.zip")
+    if item is None:
+        return False
+    if relpath in getattr(item, "damaged_disks", ()):
+        return True
+    return item.state in REPLACE_STATES and relpath == f"{item.folder}/{item.name}.zip"
 
 
 def _elsewhere(unclaimed, remaining, basename):

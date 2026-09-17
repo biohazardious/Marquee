@@ -526,9 +526,11 @@ of exactly the right size, which the size-based comparison would never question 
 
 Since 0.5.1 a plan samples the body of every source file and, when a download client
 is configured, asks it which files are still arriving; those wait, marked *partial*,
-until the next plan. If a transfer ran against a half-fetched set before this, delete
-the affected disks from the library and build the plan again: they are copied afresh
-once the download has finished.
+until the next plan. If a transfer ran against a half-fetched set before this, run
+**Check the library**: it now opens every disk as well as every zip, calls a
+zero-filled disk *damaged*, and the next transfer replaces it from the finished
+download. A single missing piece inside an otherwise complete disk is beyond what
+sampling can see; only the download client's own piece hashes can tell that.
 
 ### The library is lighter than the selection says, and the Wanted page shows nothing
 

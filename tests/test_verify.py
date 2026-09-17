@@ -233,3 +233,69 @@ class TestReadingThroughAnOpener:
         assert {item.name: item.state for item in items} == {
             "pacman": verify.CURRENT, "junk": verify.DAMAGED, "gone": verify.ABSENT}
         assert counts == {verify.CURRENT: 1, verify.DAMAGED: 1, verify.ABSENT: 1}
+
+
+class TestADiskInTheLibrary:
+    """A transfer that copied a disk before the download finished leaves a CHD-sized
+    run of zeros with a real header. Sizes cannot tell; the check has to."""
+
+    def test_a_whole_disk_is_current(self, tmp_path):
+        path = tmp_path / "ok.chd"
+        path.write_bytes(b"MComprHD" + b"c" * 200000)
+        assert verify.check_disk(str(path)) == (verify.CURRENT, [])
+
+    def test_a_zero_filled_disk_is_damaged(self, tmp_path):
+        path = tmp_path / "zeros.chd"
+        path.write_bytes(b"MComprHD" + b"\x00" * 200000)
+        state, detail = verify.check_disk(str(path))
+        assert state == verify.DAMAGED and "zero-filled" in detail[0]
+
+    def test_something_that_is_not_a_chd_is_damaged(self, tmp_path):
+        path = tmp_path / "not.chd"
+        path.write_bytes(b"x" * 100)
+        assert verify.check_disk(str(path))[0] == verify.DAMAGED
+
+    def test_a_disk_that_is_not_there(self, tmp_path):
+        assert verify.check_disk(str(tmp_path / "nope.chd")) == (verify.ABSENT, [])
+
+    def test_it_reads_through_an_opener_too(self, tmp_path):
+        path = tmp_path / "zeros.chd"
+        path.write_bytes(b"MComprHD" + b"\x00" * 200000)
+        opened = []
+
+        def opener(relpath):
+            opened.append(relpath)
+            return open(path, "rb")
+        assert verify.check_disk("Genre/x/zeros.chd", opener)[0] == verify.DAMAGED
+        assert opened == ["Genre/x/zeros.chd"]
+
+    def test_the_library_check_names_the_damaged_disk(self, tmp_path, categorised, config,
+                                                      romset):
+        from marquee import catalog
+        from marquee import plan as planning
+        built = planning.build(categorised, str(romset["rom_dir"]), str(romset["chd_dir"]),
+                               catalog.folder_namer(config), config.allow_mature)
+        item = next(one for one in built.items if one.name == "twodisk")
+        root = romset["out_dir"]
+        (root / item.folder / "twodisk").mkdir(parents=True)
+        (root / item.folder / "twodisk" / "ok.chd").write_bytes(b"MComprHD" + b"\x00" * 200000)
+        counts = verify.check_library([item], {}, str(root))
+        assert counts == {verify.DAMAGED: 1}
+        assert item.damaged_disks == [f"{item.folder}/twodisk/ok.chd"]
+        assert any("ok.chd: zero-filled" in line for line in item.state_detail)
+
+    def test_a_disk_on_its_way_to_a_new_folder_is_checked_where_it_is(self, tmp_path,
+                                                                        categorised, config,
+                                                                        romset):
+        from marquee import catalog
+        from marquee import plan as planning
+        built = planning.build(categorised, str(romset["rom_dir"]), str(romset["chd_dir"]),
+                               catalog.folder_namer(config), config.allow_mature)
+        item = next(one for one in built.items if one.name == "twodisk")
+        root = romset["out_dir"]
+        (root / "Old" / "twodisk").mkdir(parents=True)
+        (root / "Old" / "twodisk" / "ok.chd").write_bytes(b"MComprHD" + b"c" * 200000)
+        counts = verify.check_library([item], {}, str(root),
+                                      moved={f"{item.folder}/twodisk/ok.chd": "Old/twodisk/ok.chd"})
+        assert item.damaged_disks == []
+        assert verify.DAMAGED not in counts

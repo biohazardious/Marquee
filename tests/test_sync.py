@@ -595,3 +595,17 @@ class TestACloneSharesItsParentsDisk:
         assert report.counts[sync.MOVE] == 0, "nothing renames onto a file already there"
         assert kinds(report)["Unlisted/dlair/dlair.chd"] == sync.ORPHAN
         assert Plan.absent_items[0].in_library is True
+
+
+class TestADamagedDiskIsReplaced:
+    """Same name, same size, zeros inside: only what the check found can say so."""
+
+    def test_a_damaged_disk_is_updated_at_the_same_size(self, plan):
+        item = next(one for one in plan.items if one.name == "twodisk")
+        disk = f"{item.folder}/twodisk/ok.chd"
+        here = {relpath: size for _src, relpath, size in plan.files()}
+        assert kinds(sync.compare(plan, dict(here)))[disk] == sync.KEEP
+        item.damaged_disks = [disk]
+        report = sync.compare(plan, dict(here))
+        assert kinds(report)[disk] == sync.UPDATE
+        assert kinds(report)[f"{item.folder}/twodisk.zip"] == sync.KEEP

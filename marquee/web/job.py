@@ -202,16 +202,19 @@ class Job:
             # A file the next run is going to relocate is not where it belongs yet.
             # Checking only the destination path reported 871 of those as absent when
             # every one of them was sitting a folder away.
-            where = {}
+            where, moved = {}, {}
             if plan.sync is not None:
                 for action in plan.sync.actions:
-                    if (action.kind == sync.MOVE and action.machine
-                            and action.relpath.endswith(".zip")):
+                    if action.kind != sync.MOVE:
+                        continue
+                    if action.machine and action.relpath.endswith(".zip"):
                         where[action.machine] = action.from_relpath
+                    elif action.relpath.endswith(".chd"):
+                        moved[action.relpath] = action.from_relpath
             counts = verify.check_library(
                 here, manifests, config.copy_path, reporter,
                 should_continue=lambda: not self._cancel.is_set(), where=where,
-                opener=opener)
+                opener=opener, moved=moved)
             with self._lock:
                 self.checked = counts
                 # On the plan as well: the page's description of it is memoised, and

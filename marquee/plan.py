@@ -63,6 +63,9 @@ class PlannedItem:
     # folder ready to be copied. Set by marquee.sync; False until something compared.
     settled: bool = False
     compared: bool = False
+    # Disks the library check found zero-filled, by library-relative path: the next
+    # transfer replaces them however right their size looks.
+    damaged_disks: list = field(default_factory=list)
     # The wanted paths that are neither in the library nor in the source folder:
     # what a download would have to bring. Meaningful once `compared`.
     unsettled: list = field(default_factory=list)
@@ -308,32 +311,7 @@ def _leaf_label(category):
 
 
 ZIP_END_RECORD = b"PK\x05\x06"
-CHD_MAGIC = b"MComprHD"
-
-
-# How a file still arriving is told from a finished one, beyond its first and last
-# bytes. A torrent client fetches the first and last pieces early -- that is what
-# makes a video previewable -- so a 14 GB disk at 0.4% already carried its header,
-# and it was copied to the library as fourteen gigabytes of zeros. Eight small reads
-# spread over the body, plus the tail: a piece that has not arrived is zeros, and a
-# compressed stream is never zeros for four kilobytes at a stretch.
-SAMPLE_BYTES = 4096
-SAMPLES = 8
-TAIL_BYTES = 65536
-
-
-def _body_has_data(handle, size):
-    """False when a sample of the body, or the tail, is nothing but zeros."""
-    if size <= SAMPLE_BYTES * 4:
-        return True
-    positions = [size - min(TAIL_BYTES, size)]
-    positions += [int(size * (index + 0.5) / SAMPLES) for index in range(SAMPLES)]
-    for position in positions:
-        handle.seek(position)
-        chunk = handle.read(min(SAMPLE_BYTES, size - position))
-        if chunk and not chunk.strip(b"\x00"):
-            return False
-    return True
+CHD_MAGIC = verify.CHD_MAGIC
 
 
 def looks_complete(path):
@@ -344,7 +322,7 @@ def looks_complete(path):
     in the last 22 bytes of a plain zip and a little further in from a TorrentZip'd
     one (which carries a comment), so the last 128 bytes are enough. A CHD is
     recognised by its header; a placeholder has none. Either way the body is sampled
-    too (see `_body_has_data`): the ends of a file arrive first. A few small reads
+    too (see `verify.body_has_data`): the ends of a file arrive first. A few small reads
     per file: fourteen thousand of them take a couple of seconds.
 
     Strict on purpose. A finished file wrongly called partial waits, visibly, for the
@@ -360,12 +338,12 @@ def looks_complete(path):
                 handle.seek(max(0, size - 128))
                 if ZIP_END_RECORD not in handle.read():
                     return False
-                return _body_has_data(handle, size)
+                return verify.body_has_data(handle, size)
             if lower.endswith(".chd"):
                 handle.seek(0)
                 if handle.read(len(CHD_MAGIC)) != CHD_MAGIC:
                     return False
-                return _body_has_data(handle, size)
+                return verify.body_has_data(handle, size)
     except OSError:
         return False
     return True
