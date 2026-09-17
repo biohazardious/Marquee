@@ -323,10 +323,14 @@ def build_plan(config, options=None, reporter=None):
         except Exception as error:  # noqa: BLE001 -- a client that will not answer
             reporter.warn(f"Could not ask the download client what is still arriving: "
                           f"{error}")
-        arriving = sum(1 for done in progress.values() if done < 1)
+        # Only what this plan could otherwise have copied: the 44,000 deselected zips
+        # of a narrowed ROM torrent are at 0% too, and are not "arriving".
+        roots = tuple(os.path.normpath(root) + os.sep for root in (rom_dir, chd_dir) if root)
+        arriving = sum(1 for path, done in progress.items()
+                       if done < 1 and os.path.normpath(path).startswith(roots))
         if arriving:
-            reporter.info(f"{arriving:,} files are still arriving in the download "
-                          f"client and will not be copied yet.")
+            reporter.info(f"{arriving:,} files in the source folders are still arriving "
+                          f"in the download client and will not be copied yet.")
     built = planning.build(mame_list, rom_dir, chd_dir,
                            catalog.folder_namer(config), config.allow_mature,
                            progress=progress)
