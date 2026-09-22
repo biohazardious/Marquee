@@ -240,8 +240,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/api/state":
                 after = self._number((query.get("after") or ["0"])[0])
-                payload = self.app.job.snapshot(after, self.app.release_sizes())
-                payload["config"] = self.app.config_payload()
+                # The plan and the settings are 130 KB of a 137 KB answer on a real
+                # library and change only when something is planned or saved; the page
+                # names the revisions it holds and is sent only what moved.
+                payload = self.app.job.snapshot(
+                    after, self.app.release_sizes(),
+                    plan_rev=(query.get("plan_rev") or [None])[0])
+                config_rev = self.app.config_rev()
+                payload["config_rev"] = config_rev
+                if config_rev is None or (query.get("config_rev") or [None])[0] != config_rev:
+                    payload["config"] = self.app.config_payload()
                 payload["survey"] = {"running": self.app.survey["running"],
                                      "data": self.app.survey["data"],
                                      "error": self.app.survey.get("error")}

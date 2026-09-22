@@ -87,14 +87,24 @@ export function refresh() {
   return inflight;
 }
 
+/* The plan and the settings are most of every answer and seldom change, so the
+   revisions already in hand go with the request and the server leaves out whatever
+   they still describe. A key left out keeps its value in the merge below. */
+function stateUrl(after) {
+  const query = new URLSearchParams({ after });
+  if (state.data.plan && state.data.plan_rev) query.set('plan_rev', state.data.plan_rev);
+  if (state.data.config && state.data.config_rev) query.set('config_rev', state.data.config_rev);
+  return `/api/state?${query.toString()}`;
+}
+
 async function doRefresh() {
-  let snapshot = await api(`/api/state?after=${state.cursor}`);
+  let snapshot = await api(stateUrl(state.cursor));
   if (snapshot.sequence !== undefined && snapshot.sequence < state.cursor) {
     // The job was reset: its numbering started over, so ours is ahead of it and
     // would skip every line the new run has already written. Start again.
     state.cursor = 0;
     events = [];
-    snapshot = await api('/api/state?after=0');
+    snapshot = await api(stateUrl(0));
   }
   if (snapshot.sequence !== undefined) state.cursor = snapshot.sequence;
   if (snapshot.events && snapshot.events.length) {
@@ -102,7 +112,8 @@ async function doRefresh() {
   }
   // Events arrive as a delta; everything else is a full picture each time -- and the
   // server sends every key, null when there is nothing, so a re-plan does not keep
-  // showing the previous run's summary.
+  // showing the previous run's summary. The two exceptions, plan and config, are
+  // left out only when the revision sent says the page already has them.
   const { events: _drop, ...rest } = snapshot;
   state.data = { ...state.data, ...rest };
   announce();

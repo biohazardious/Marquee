@@ -4,6 +4,7 @@ The pipeline already reports through a Reporter and separates planning from copy
 this is only bookkeeping: run the work on a thread, collect events, and expose a
 snapshot the page can render.
 """
+import itertools
 import os
 import threading
 import time
@@ -300,7 +301,7 @@ class Job:
 
     # -- what the page reads ------------------------------------------------ #
 
-    def snapshot(self, after=0, sizes=None):
+    def snapshot(self, after=0, sizes=None, plan_rev=None):
         """The job as the page reads it.
 
         Only the copy of the fields happens under the lock. Describing the plan can
@@ -311,6 +312,11 @@ class Job:
         Every key is always present, None when there is nothing: the page merges
         snapshots, so a key that was simply left out kept its previous run's value,
         and a re-plan showed the old transfer's summary until the new one finished.
+
+        The one exception is the plan, which is most of the answer and changes only
+        when something is planned or compared. `plan_rev` is the revision the page
+        already holds; when it is still current the plan is left out and
+        `plan_rev` says so. A plan that went away is still sent, as None.
         """
         with self._lock:
             payload = {
@@ -325,11 +331,18 @@ class Job:
             checked = None if self.checked is None else dict(self.checked)
             summary = self.summary
             described = self._described
+        payload["plan_rev"] = None
         if plan is not None:
-            payload["plan"] = describe(plan, config, described, sizes)
+            described_plan = describe(plan, config, described, sizes)
             # What this plan was actually built from, so the page can tell whether
             # its own form has moved on rather than guessing from a flag.
-            payload["plan"]["built_from"] = built_from(config)
+            origin = built_from(config)
+            rev = f"{described_plan['rev']}:{hash(repr(sorted(origin.items())))}"
+            payload["plan_rev"] = rev
+            if plan_rev == rev:
+                del payload["plan"]
+            else:
+                payload["plan"] = dict(described_plan, built_from=origin)
         if resolution is not None:
             payload["resolution"] = {
                 "xml_file": resolution.xml_file,
@@ -1106,6 +1119,9 @@ def built_from(config):
     }
 
 
+_REVISIONS = itertools.count(1)
+
+
 def describe(plan, config, cache=None, sizes=None):
     """The plan as the page reads it.
 
@@ -1129,6 +1145,9 @@ def describe(plan, config, cache=None, sizes=None):
 
     space = check_free_space(plan, config.copy_path) if config else None
     payload = {
+        # Which description this is: the page sends it back and is spared the rest
+        # while it still holds. A counter, not an id(), which CPython reuses.
+        "rev": next(_REVISIONS),
         "machines": len(plan.items),
         # What the selection asks for, as against what is here. On a fresh install the
         # first is zero and the second is the whole catalogue, and a page that only

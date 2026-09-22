@@ -353,7 +353,8 @@ def looks_complete(path):
     return True
 
 
-def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature, progress=None):
+def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature, progress=None,
+          sample=True):
     """Decide what would be copied. `folder_for` maps a category to (folder, is_mature).
 
     Machines excluded by genre are still measured, so the genre breakdown reflects the
@@ -363,6 +364,10 @@ def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature, progress=None):
     word outranks what the file looks like, both ways: the client knows which pieces
     it has, and a finished file it vouches for is finished however many zeros a
     sample of it happens to hit.
+
+    `sample=False` takes a file the client does not vouch for as finished without
+    reading it: for a listing nothing will be copied from, where a dozen reads a file
+    across thousands of files is minutes on a cold pool for a label.
     """
     known = {os.path.normpath(path): done for path, done in (progress or {}).items()}
 
@@ -370,7 +375,7 @@ def build(mame_list, rom_dir, chd_dir, folder_for, allow_mature, progress=None):
         done = known.get(os.path.normpath(path))
         if done is not None:
             return done >= 1
-        return looks_complete(path)
+        return looks_complete(path) if sample else True
     plan = CopyPlan()
     seen_missing_chds = set()
     genres = {}

@@ -58,6 +58,8 @@ class Application:
         # and set it as two steps, so two requests close together -- a double click,
         # or every open tab's poll asking for the release listing -- both started one.
         self._task_lock = threading.Lock()
+        # Download clients by (address, user, password); see client().
+        self._clients = {}
         self._config_cache = {"stamp": None, "config": None}
         self._torrent_sizes = {"at": 0.0, "data": {}}
         # The status bar on every page asks for the queue; one answer serves all of
@@ -88,6 +90,13 @@ class Application:
         config = configuration.load(self.settings_path)
         self._config_cache = {"stamp": stamp, "config": config}
         return config
+
+    def config_rev(self):
+        """A revision for the settings as the page sees them: the file's stamp, which
+        every save moves. None when there is no file to stamp."""
+        self.current_config()
+        stamp = self._config_cache.get("stamp")
+        return None if stamp is None else "-".join(str(part) for part in stamp)
 
     def autoplan(self):
         """Build a plan at startup, so a restart does not leave an empty page.
@@ -142,7 +151,18 @@ class Application:
             same = ((url or "").rstrip("/") == (config.download_client or "").rstrip("/")
                     and (username or "") == (config.download_username or ""))
             password = config.download_password if same else None
-        return download.for_url(url, username=username, password=password)
+        # One client, and so one session, per address and credentials. A new one per
+        # call logged in again every time -- the queue alone asks every few seconds,
+        # which was a fresh qBittorrent session each time, each kept for an hour.
+        key = (url, username, password)
+        with self._task_lock:
+            cached = self._clients.get(key)
+            if cached is None:
+                cached = download.for_url(url, username=username, password=password)
+                if len(self._clients) > 8:
+                    self._clients.clear()
+                self._clients[key] = cached
+        return cached
 
     def test_client(self, body):
         """Reach the client, and say where its downloads land -- in its own terms and
@@ -981,7 +1001,7 @@ class Application:
             return cached["data"]
         try:
             client = self.client()
-            entries = client.status()
+            entries = client.status(category=acquisition.CATEGORY)
         except MarqueeError as error:
             payload = {"configured": True, "error": str(error), "torrents": []}
         else:
@@ -1018,11 +1038,9 @@ class Application:
 
     def art_payload(self):
         kind = self.art["kind"]
-        return {**self.art,
-                "cached": art.cached_count(kind),
-                "bytes": art.cache_bytes(kind),
-                "bytes_human": human_bytes(art.cache_bytes(kind)),
-                "kinds": list(art.KINDS)}
+        count, size = art.cache_totals(kind)
+        return {**self.art, "cached": count, "bytes": size,
+                "bytes_human": human_bytes(size), "kinds": list(art.KINDS)}
 
     def start_art(self, body):
         if self.art["running"]:

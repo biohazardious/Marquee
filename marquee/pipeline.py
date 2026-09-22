@@ -334,7 +334,8 @@ def build_plan(config, options=None, reporter=None):
     built = planning.build(mame_list, rom_dir, chd_dir,
                            catalog.folder_namer(config), config.allow_mature,
                            progress=progress)
-    built.left_out = _left_out(rejects, catlist, config, rom_dir, chd_dir, reporter)
+    built.left_out = _left_out(rejects, catlist, config, rom_dir, chd_dir, reporter,
+                               progress=progress)
 
     if options.compare_destination:
         built.sync = compare_destination(built, config, reporter)
@@ -356,7 +357,7 @@ def build_plan(config, options=None, reporter=None):
     return built, resolution
 
 
-def _left_out(rejects, catlist, config, rom_dir, chd_dir, reporter):
+def _left_out(rejects, catlist, config, rom_dir, chd_dir, reporter, progress=None):
     """The machines that did not make it, as a catalogue of their own.
 
     Built the same way as the library so the page can show them in the same shape --
@@ -369,8 +370,12 @@ def _left_out(rejects, catlist, config, rom_dir, chd_dir, reporter):
     bare = replace(config, blacklist_genres=[], blacklist_categories=[],
                    blacklist_roms=[])
     listed = catalog.categorize(rejects, catlist, bare)
+    # Nothing is copied from these, so nothing is read from them either: 7,500
+    # rejected zips sampled a dozen times each was minutes on a cold pool, on every
+    # plan, for a column that says "downloaded". The client's word is still taken.
     plan = planning.build(listed, rom_dir, chd_dir,
-                          catalog.folder_namer(config), allow_mature=True)
+                          catalog.folder_namer(config), allow_mature=True,
+                          progress=progress, sample=False)
     for item in plan.wanted:
         item.reason = reasons.get(item.name, "")
     reporter.info(f"{len(plan.wanted)} machines left out of the library.")

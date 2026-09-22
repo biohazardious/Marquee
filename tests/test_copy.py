@@ -505,6 +505,32 @@ class TestHardlinking:
         assert target.stat().st_ino == source.stat().st_ino
         assert not list((tmp_path / "library").rglob("*.link"))
 
+    def test_a_kernel_copy_that_gives_up_half_way_is_finished_by_hand(
+            self, tmp_path, monkeypatch):
+        """copy_file_range can refuse at any point -- an older kernel across
+        filesystems, a FUSE mount. The rest is read and written from where it got to."""
+        import errno
+        from marquee.backends import local
+        monkeypatch.setattr(local, "CHUNKED_ABOVE", 0)
+        monkeypatch.setattr(local, "CHUNK_SIZE", 1000)
+        body = bytes(range(256)) * 20
+        source = self.source(tmp_path, body)
+        real = getattr(os, "copy_file_range", None)
+        calls = []
+
+        def once_then_refuse(src, dst, count, *args):
+            calls.append(count)
+            if len(calls) > 1 or real is None:
+                raise OSError(errno.EXDEV, "cross-device")
+            return real(src, dst, count)
+        monkeypatch.setattr(os, "copy_file_range", once_then_refuse, raising=False)
+        counted = []
+        LocalCopy(str(tmp_path / "library")).copy(str(source), "Maze",
+                                                  on_bytes=counted.append)
+        target = tmp_path / "library" / "Maze" / "galaga.zip"
+        assert target.read_bytes() == body
+        assert sum(counted) == len(body)
+
     def test_removing_the_library_copy_leaves_the_torrent_file(self, tmp_path):
         source = self.source(tmp_path)
         backend = LocalCopy(str(tmp_path / "library"), hardlink=True)

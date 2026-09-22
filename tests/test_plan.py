@@ -541,3 +541,30 @@ class TestAFileStillArriving:
         good = next(item for item in built.wanted if item.name == "goodgame")
         assert good.partial is True and good.rom_source is None
         assert "goodgame" in built.partial_roms
+
+
+class TestALabelIsNotWorthReadingFor:
+    """The left-out catalogue is built with `sample=False`: nothing is copied from
+    it, and sampling thousands of rejected zips was minutes on a cold pool."""
+
+    def test_nothing_is_read_without_sampling(self, tmp_path, monkeypatch):
+        (tmp_path / "pacman.zip").write_bytes(b"\0" * 100)     # a placeholder
+        read = []
+        monkeypatch.setattr(CopyPlan, "looks_complete", lambda path: read.append(path))
+        listed = {"pacman": {"description": "Pac-Man", "category": "Maze / Misc.",
+                             "genre": "Maze"}}
+        built = CopyPlan.build(listed, str(tmp_path), str(tmp_path),
+                               lambda category: ("Maze/Misc", False), True, sample=False)
+        assert read == []
+        assert built.items[0].rom_source
+
+    def test_the_clients_word_still_counts(self, tmp_path):
+        path = tmp_path / "pacman.zip"
+        path.write_bytes(b"PK" + b"x" * 100)
+        listed = {"pacman": {"description": "Pac-Man", "category": "Maze / Misc.",
+                             "genre": "Maze"}}
+        built = CopyPlan.build(listed, str(tmp_path), str(tmp_path),
+                               lambda category: ("Maze/Misc", False), True,
+                               progress={str(path): 0.3}, sample=False)
+        item = built.wanted[0]
+        assert item.rom_source is None and item.partial

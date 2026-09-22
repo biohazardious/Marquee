@@ -6,8 +6,8 @@ from marquee.reporting import CollectingReporter
 
 
 class Entry:
-    def __init__(self, filename, file_size):
-        self.filename, self.file_size = filename, file_size
+    def __init__(self, filename, file_size, is_dir=False):
+        self.filename, self.file_size, self.isDirectory = filename, file_size, is_dir
 
 
 class FakeConnection:
@@ -285,16 +285,46 @@ class TestReadingAFileBack:
         import io, zipfile
         from marquee import verify
         payload = io.BytesIO()
-        with zipfile.ZipFile(payload, "w") as archive:
-            archive.writestr("pacman.6e", b"x" * 4000)
-            archive.writestr("pacman.6f", b"y" * 4000)
+        with zipfile.ZipFile(payload, "w", zipfile.ZIP_STORED) as archive:
+            archive.writestr("pacman.6e", b"x" * 400_000)
+            archive.writestr("pacman.6f", b"y" * 400_000)
         conn = self.RangedConnection({"roms/Maze/pacman.zip": payload.getvalue()})
         copier = build("smb://u:p@nas/Share/roms", conn)
         with copier.open_read("Maze/pacman.zip") as handle:
             found = verify.zip_index(handle)
         assert set(found) == {"pacman.6e", "pacman.6f"}
-        # The central directory, not the whole 8 KB of content.
-        assert sum(length for _offset, length in conn.fetched) < 2000
+        # The end of the file in one fetch, not the 800 KB of content -- and not the
+        # three round trips zipfile's own reads would have been.
+        assert len(conn.fetched) == 1
+        assert sum(length for _offset, length in conn.fetched) <= \
+            RemoteCopy.SmbReadable.TAIL
+
+    def test_a_size_the_index_already_listed_is_not_asked_for_again(self):
+        import io, zipfile
+        from marquee import verify
+        payload = io.BytesIO()
+        with zipfile.ZipFile(payload, "w") as archive:
+            archive.writestr("pacman.6e", b"x" * 4000)
+        body = payload.getvalue()
+
+        class Listed(self.RangedConnection):
+            asked = 0
+
+            def getAttributes(self, share, path):
+                Listed.asked += 1
+                return super().getAttributes(share, path)
+
+            def listPath(self, _share, path):
+                if path == "roms":
+                    return [Entry("Maze", 0, True)]
+                return [Entry("pacman.zip", len(body))]
+        conn = Listed({"roms/Maze/pacman.zip": body})
+        copier = build("smb://u:p@nas/Share/roms", conn)
+        copier.index()
+        with copier.open_read("Maze/pacman.zip") as handle:
+            assert set(verify.zip_index(handle)) == {"pacman.6e"}
+        assert Listed.asked == 0
+        assert len(conn.fetched) == 1
 
     def test_a_missing_file_is_file_not_found(self):
         conn = self.RangedConnection({})

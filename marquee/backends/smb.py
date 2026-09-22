@@ -75,17 +75,39 @@ class SmbReadable:
     exactly what reading a zip's central directory needs -- the last few kilobytes,
     then a seek or two -- so each read() is one ranged fetch and nothing is
     downloaded that is not asked for. Enough of the file protocol for zipfile.
+
+    The end of the file is fetched once, as one block, the first time anything in it
+    is read. zipfile reads the end record, then the central directory, then checks
+    the end record again -- three round trips, and a getAttributes before them, for
+    every zip in a 10,000-game library. A size already known from the listing
+    spares the getAttributes too.
     """
 
-    def __init__(self, conn, share, path):
+    # A zip's end record plus its central directory: 64 KB covers a game with about
+    # a thousand ROMs in it. Anything further back is still a ranged fetch.
+    TAIL = 64 * 1024
+
+    def __init__(self, conn, share, path, size=None):
         self.conn, self.share, self.path = conn, share, path
-        try:
-            self.size = conn.getAttributes(share, path).file_size
-        except (smb_structs.OperationFailure, smb_structs.ProtocolError) as error:
-            raise FileNotFoundError(path) from error
-        except _LOST as error:
-            raise OSError(f"reading {path}: {_brief(error)}") from error
+        self.size = size
+        if self.size is None:
+            try:
+                self.size = conn.getAttributes(share, path).file_size
+            except (smb_structs.OperationFailure, smb_structs.ProtocolError) as error:
+                raise FileNotFoundError(path) from error
+            except _LOST as error:
+                raise OSError(f"reading {path}: {_brief(error)}") from error
         self.position = 0
+        self._tail = None
+
+    def _from_tail(self, length):
+        start = max(0, self.size - self.TAIL)
+        if self.position < start or self.position + length > self.size:
+            return None
+        if self._tail is None:
+            self._tail = self._fetch(start, self.size - start)
+        offset = self.position - start
+        return self._tail[offset:offset + length]
 
     def read(self, length=-1):
         if length is None or length < 0:
@@ -93,15 +115,20 @@ class SmbReadable:
         length = max(0, min(length, self.size - self.position))
         if not length:
             return b""
+        data = self._from_tail(length)
+        if data is None:
+            data = self._fetch(self.position, length)
+        self.position += len(data)
+        return data
+
+    def _fetch(self, offset, length):
         buffer = io.BytesIO()
         try:
             self.conn.retrieveFileFromOffset(self.share, self.path, buffer,
-                                             offset=self.position, max_length=length)
+                                             offset=offset, max_length=length)
         except _FAILED as error:
             raise OSError(f"reading {self.path}: {_brief(error)}") from error
-        data = buffer.getvalue()
-        self.position += len(data)
-        return data
+        return buffer.getvalue()
 
     def seek(self, offset, whence=os.SEEK_SET):
         base = {os.SEEK_SET: 0, os.SEEK_CUR: self.position, os.SEEK_END: self.size}[whence]
@@ -375,6 +402,10 @@ class RemoteCopy(CopyBackend):
                 # all of it planned as new, the rest as orphans. Better to stop.
                 raise BackendError(f"Lost the share while listing {current or '/'}: "
                                    f"{_brief(error)}") from error
+            # Kept: the listing is what a later copy or check would ask for again.
+            self._listing_cache[current or '/'] = {
+                entry.filename: entry.file_size for entry in entries
+                if not entry.isDirectory and entry.filename not in (".", "..")}
             for entry in entries:
                 if entry.filename in (".", ".."):
                     continue
@@ -389,7 +420,11 @@ class RemoteCopy(CopyBackend):
         return found
 
     def open_read(self, relpath):
-        return SmbReadable(_Retrying(self), self.share_name, self._absolute(relpath))
+        remote = self._absolute(relpath)
+        # The size, when a listing already said it: one round trip fewer a file.
+        known = self._listing_cache.get(posixpath.dirname(remote) or '/', {})
+        return SmbReadable(_Retrying(self), self.share_name, remote,
+                           size=known.get(posixpath.basename(remote)))
 
     def _absolute(self, relpath):
         return posixpath.join(self.remote_path, relpath).strip("/")

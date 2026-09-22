@@ -1039,7 +1039,7 @@ class TestWhereADownloadLands:
             def categories(self):
                 return {"marquee": {"name": "marquee", "savePath": "/data/torrents/marquee"}}
 
-            def status(self):
+            def status(self, category=None):
                 return []
 
         app.client = lambda overrides=None: Probe()
@@ -1110,7 +1110,7 @@ class TestWhyATorrentFailed:
         post(base, "/api/save", {"download_client": "http://x/"})
 
         class Probe:
-            def status(self):
+            def status(self, category=None):
                 return [{"hash": "b3" * 20, "name": "MAME 0.289 ROMs (non-merged)",
                          "state": "error", "phase": "failed", "progress": 0.0,
                          "downloaded": 0, "size": 10, "total_size": 10, "speed": 0,

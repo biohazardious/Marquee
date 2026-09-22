@@ -1980,7 +1980,7 @@ class TestWhatTheClientIsStillFetching:
             self.torrent_progress = torrent_progress
             self.size = size
 
-        def status(self, infohashes=None):
+        def status(self, infohashes=None, category=None):
             return [{"hash": "cd" + "0" * 38, "progress": self.torrent_progress,
                      "save_path": self.save_path, "category": "marquee"}]
 
@@ -2329,3 +2329,79 @@ class TestBackgroundTasksStartOnce:
             time.sleep(0.02)
         assert "no entry" in (app.survey["error"] or "")
         assert get(base, "/api/state")["survey"]["error"]
+
+
+class TestTheStatePollSendsOnlyWhatMoved:
+    """On a real library the plan and the settings were 130 KB of a 137 KB answer,
+    sent every 0.7 s while busy. The page names the revisions it holds."""
+
+    @pytest.fixture
+    def planned(self, server, xml_path, catlist_path):
+        base, app = server
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        return base, app
+
+    def revs(self, state):
+        return urllib.parse.urlencode({"plan_rev": state["plan_rev"],
+                                       "config_rev": state["config_rev"]})
+
+    def test_what_the_page_holds_is_left_out(self, planned):
+        base, _app = planned
+        first = get(base, "/api/state")
+        assert first["plan"] and first["config"]
+        again = get(base, "/api/state?" + self.revs(first))
+        assert "plan" not in again and "config" not in again
+        assert again["plan_rev"] == first["plan_rev"]
+        assert again["state"] == "planned", "everything else still comes"
+
+    def test_a_save_sends_the_settings_again(self, planned):
+        base, _app = planned
+        first = get(base, "/api/state")
+        post(base, "/api/save", {"allow_mature": False})
+        again = get(base, "/api/state?" + self.revs(first))
+        assert again["config"]["allow_mature"] is False
+        assert again["config_rev"] != first["config_rev"]
+
+    def test_a_new_plan_is_sent(self, planned, xml_path, catlist_path):
+        base, app = planned
+        first = get(base, "/api/state")
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        again = get(base, "/api/state?" + self.revs(first))
+        assert again["plan"] and again["plan_rev"] != first["plan_rev"]
+
+    def test_without_revisions_everything_comes(self, planned):
+        base, _app = planned
+        state = get(base, "/api/state")
+        assert state["plan"]["built_from"] and state["config"]
+
+
+class TestOneDownloadClientPerAddress:
+    """A new client per call was a new qBittorrent login per call, and the queue
+    alone asks every few seconds."""
+
+    @pytest.fixture
+    def app(self, server, config):
+        _base, app = server
+        config.download_client, config.download_username = "http://nas:8080/", "admin"
+        config.download_password = "hunter2"
+        configuration.write_settings_file(config.settings_path, config)
+        return app
+
+    def test_the_same_client_is_used_again(self, app):
+        assert app.client() is app.client()
+
+    def test_other_credentials_get_their_own(self, app):
+        assert app.client() is not app.client({"download_password": "other"})
+
+    def test_the_queue_asks_only_for_this_tools_category(self, app, monkeypatch):
+        asked = []
+
+        class Probe:
+            def status(self, infohashes=None, category=None):
+                asked.append(category)
+                return []
+        monkeypatch.setattr(app, "client", lambda overrides=None: Probe())
+        app.queue_payload()
+        assert asked == ["marquee"]

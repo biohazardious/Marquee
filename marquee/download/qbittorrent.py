@@ -89,8 +89,9 @@ class QBittorrent:
                 payload = response.read()
                 status = response.status
         except urllib.error.HTTPError as error:
-            if error.code == 403:
-                # The session expired; one silent re-login, then give up.
+            if error.code in (401, 403):
+                # The session expired; one silent re-login, then give up. 403 is what
+                # qBittorrent says; a reverse proxy in front of it may say 401.
                 self._authenticated = False
                 raise QBittorrentAuthError(
                     "qBittorrent refused the request (403). Check the username and "
@@ -347,8 +348,14 @@ class QBittorrent:
                 "Refusing to deselect every file: qBittorrent treats a torrent with "
                 "nothing selected as an error.")
 
-        self.set_priority(infohash, skip, PRIO_SKIP)
-        self.set_priority(infohash, keep, PRIO_NORMAL)
+        # Only what actually changes. Every index used to be sent every time -- 45k
+        # of them in 23 requests on a set whose selection had not moved -- and a
+        # file somebody had set to High or Maximum came back at Normal.
+        by_index = {entry["index"]: entry.get("priority", PRIO_NORMAL) for entry in current}
+        self.set_priority(infohash, [index for index in skip
+                                     if by_index[index] != PRIO_SKIP], PRIO_SKIP)
+        self.set_priority(infohash, [index for index in keep
+                                     if by_index[index] == PRIO_SKIP], PRIO_NORMAL)
         return {"selected": len(keep), "skipped": len(skip),
                 "wanted": len(wanted & set(keep)),
                 "kept_complete": len(keep) - len(wanted & set(keep))}
@@ -393,10 +400,14 @@ class QBittorrent:
                    {"hashes": infohash,
                     "deleteFiles": "true" if delete_files else "false"})
 
-    def status(self, infohashes=None):
+    def status(self, infohashes=None, category=None):
         data = {}
         if infohashes:
             data["hashes"] = "|".join(infohashes)
+        if category is not None:
+            # Filtered by the client: a library of other torrents is not read, and
+            # sent over, every few seconds just to be thrown away here.
+            data["category"] = category
         raw = self._json("torrents/info", data or None)
         return [_status(entry) for entry in raw]
 

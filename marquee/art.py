@@ -174,24 +174,44 @@ def download(descriptions, kind=DEFAULT_KIND, on_progress=None, should_continue=
     return {"total": total, **state}
 
 
-def cached_count(kind=DEFAULT_KIND):
+_TOTALS = {}
+
+
+def cache_totals(kind=DEFAULT_KIND):
+    """(pictures, bytes) in the cache for `kind`, in one pass over the folder.
+
+    The artwork page asks every 1.2 s while a download runs, and it used to be three
+    listings and 24,000 stats of a 12,000-picture folder each time: 200 ms a poll.
+    The answer is kept until the folder's own timestamp moves, which is every time a
+    picture lands and never otherwise.
+    """
     directory = art_dir(kind)
     try:
-        return sum(1 for name in os.listdir(directory) if name.endswith(".png"))
+        stamp = os.stat(directory).st_mtime_ns
     except OSError:
-        return 0
+        return 0, 0
+    cached = _TOTALS.get(directory)
+    if cached and cached[0] == stamp:
+        return cached[1], cached[2]
+    count = total = 0
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.name.endswith(".png"):
+                    try:
+                        total += entry.stat().st_size
+                        count += 1
+                    except OSError:
+                        pass
+    except OSError:
+        return 0, 0
+    _TOTALS[directory] = (stamp, count, total)
+    return count, total
+
+
+def cached_count(kind=DEFAULT_KIND):
+    return cache_totals(kind)[0]
 
 
 def cache_bytes(kind=DEFAULT_KIND):
-    directory = art_dir(kind)
-    total = 0
-    try:
-        for name in os.listdir(directory):
-            if name.endswith(".png"):
-                try:
-                    total += os.path.getsize(os.path.join(directory, name))
-                except OSError:
-                    pass
-    except OSError:
-        return 0
-    return total
+    return cache_totals(kind)[1]

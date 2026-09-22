@@ -56,7 +56,7 @@ class FakeQbit:
                 return 204, b""
             return 200, b"Ok." if ok else b"Fails."
         if not getattr(self, "authenticated", True) and path.startswith("app/"):
-            return 403, b"Forbidden"
+            return getattr(self, "refusal", 403), b"Forbidden"
         if path == "app/webapiVersion":
             return 200, self.api_version.encode()
         if path == "app/version":
@@ -209,6 +209,15 @@ class TestSession:
         url, _ = server
         bare = QBittorrent(url, timeout=5)
         assert bare.test()["app_version"] == "v5.2.3"
+
+
+class TestAnExpiredSession:
+    def test_a_401_from_a_proxy_logs_in_again_like_a_403(self, server):
+        url, fake = server
+        qbit = client(url)
+        qbit.test()
+        fake.authenticated, fake.refusal = False, 401
+        assert qbit.test()["app_version"] == "v5.2.3"
 
 
 class TestAdd:
@@ -417,6 +426,7 @@ class TestNarrow:
 
     def test_skipping_happens_before_selecting(self, server):
         url, fake = server
+        fake.files[1]["priority"] = 0
         client(url).narrow(HASH, [1])
         # A previous selection must not leak into the new one.
         assert fake.prio_calls[0][1] == PRIO_SKIP
@@ -434,6 +444,20 @@ class TestNarrow:
         fake.files = []
         with pytest.raises(QBittorrentError, match="file list"):
             client(url).narrow(HASH, [0])
+
+    def test_a_selection_that_has_not_moved_sends_nothing(self, server):
+        url, fake = server
+        client(url).narrow(HASH, [1])
+        fake.prio_calls.clear()
+        client(url).narrow(HASH, [1])
+        assert fake.prio_calls == []
+
+    def test_a_raised_priority_is_left_raised(self, server):
+        """High (6) or Maximum (7), set by hand in qBittorrent, came back Normal."""
+        url, fake = server
+        fake.files[1]["priority"] = 7
+        client(url).narrow(HASH, [1])
+        assert fake.files[1]["priority"] == 7
 
 
 class TestAClientThatStopsAnswering:

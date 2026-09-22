@@ -163,3 +163,26 @@ class TestASourceThatCannotBeAsked:
         assert summary["missing"] == 1
         assert "429" in summary["error"]
         assert not art.have("Rate Limited")
+
+
+class TestCacheTotals:
+    """One pass, remembered until the folder changes: the page asks every 1.2 s."""
+
+    def test_counts_and_bytes_follow_the_folder(self, tmp_path, monkeypatch):
+        import time
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        folder = art.art_dir()
+        os.makedirs(folder, exist_ok=True)
+        (tmp_path / "x").write_bytes(b"")
+        with open(os.path.join(folder, "a.png"), "wb") as handle:
+            handle.write(b"x" * 10)
+        assert art.cache_totals() == (1, 10)
+        time.sleep(0.01)
+        with open(os.path.join(folder, "b.png"), "wb") as handle:
+            handle.write(b"y" * 5)
+        assert art.cache_totals() == (2, 15)
+        assert (art.cached_count(), art.cache_bytes()) == (2, 15)
+
+    def test_no_folder_is_nothing(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "none"))
+        assert art.cache_totals() == (0, 0)

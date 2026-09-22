@@ -146,8 +146,28 @@ class LocalCopy(CopyBackend):
         file the next pass replaces rather than one it would skip on matching size."""
         partial = dest + ".part"
         try:
-            with open(src, "rb") as reader, open(partial, "wb") as writer:
+            # Unbuffered, so the file positions copy_file_range moves are the ones a
+            # fallback read or write carries on from.
+            with open(src, "rb", buffering=0) as reader, \
+                    open(partial, "wb", buffering=0) as writer:
+                # In the kernel where it can be: no trip through this process for
+                # every byte, and on ZFS 2.2, btrfs or XFS a block clone that costs
+                # neither time nor space. Anything it will not do -- another
+                # filesystem on an older kernel, a FUSE mount -- falls back to reading
+                # and writing, from wherever it had got to.
+                fast = hasattr(os, "copy_file_range")
                 while True:
+                    if fast:
+                        try:
+                            moved = os.copy_file_range(reader.fileno(), writer.fileno(),
+                                                       CHUNK_SIZE)
+                        except OSError:
+                            fast = False
+                            continue
+                        if not moved:
+                            break
+                        on_bytes(moved)
+                        continue
                     chunk = reader.read(CHUNK_SIZE)
                     if not chunk:
                         break
