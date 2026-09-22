@@ -331,3 +331,93 @@ class TestARenameOntoAFileThatIsThere:
         assert "already there" in str(error.value)
         assert "SMB Message" not in str(error.value)
         assert getattr(conn, "renamed", []) == []
+
+
+class TestALostSession:
+    """pysmb's NotConnectedError and SMBTimeout are plain Exceptions: nothing caught
+    them, there was no reconnect, and one stalled write ended a 300 GB sync."""
+
+    class Flaky(FakeConnection):
+        def __init__(self, fail, times=1, error=None, existing=None):
+            super().__init__(existing)
+            from smb.base import NotConnectedError
+            self.fail, self.left = fail, times
+            self.error = error or NotConnectedError("session dropped")
+            self.closed = False
+
+        def _maybe(self, name):
+            if name == self.fail and self.left:
+                self.left -= 1
+                raise self.error
+
+        def storeFile(self, share, path, handle, timeout=30):
+            handle.read(4)           # pysmb has read some of it by the time it fails
+            self._maybe("storeFile")
+            while handle.read(4):
+                pass
+            super().storeFile(share, path, handle, timeout)
+
+        def listPath(self, share, path):
+            self._maybe("listPath")
+            return super().listPath(share, path)
+
+        def rename(self, share, old, new):
+            self._maybe("rename")
+            super().rename(share, old, new)
+
+        def close(self):
+            self.closed = True
+
+    def wired(self, conn):
+        copier = build("smb://u:p@nas/Share/roms", conn)
+        copier.reconnects = 0
+
+        def reopen():
+            copier.reconnects += 1
+            copier.conn = conn
+        copier._open_connection = reopen
+        return copier
+
+    def test_an_upload_is_retried_on_a_fresh_session(self, tmp_path):
+        source = tmp_path / "galaga.zip"
+        source.write_bytes(b"x" * 10)
+        conn = self.Flaky("storeFile")
+        copier = self.wired(conn)
+        counted = []
+        copier.copy(str(source), "Shooter", on_bytes=counted.append)
+        assert copier.reconnects == 1
+        assert conn.stored == ["roms/Shooter/galaga.zip"]
+        # What was counted before the drop is taken back: the bar ends at the size.
+        assert sum(counted) == 10
+
+    def test_a_second_failure_is_a_backend_error_for_that_file(self, tmp_path):
+        from marquee.backends import BackendError
+        source = tmp_path / "galaga.zip"
+        source.write_bytes(b"x" * 10)
+        copier = self.wired(self.Flaky("storeFile", times=2))
+        with pytest.raises(BackendError, match="Upload"):
+            copier.copy(str(source), "Shooter")
+
+    def test_a_timeout_is_treated_the_same(self, tmp_path):
+        from smb.base import SMBTimeout
+        conn = self.Flaky("rename", error=SMBTimeout())
+        copier = self.wired(conn)
+        copier.move("Old/a.zip", "New/a.zip")
+        assert copier.reconnects == 1
+        assert conn.renamed[-1] == ("roms/Old/a.zip", "roms/New/a.zip")
+
+    def test_an_index_that_loses_the_share_stops_rather_than_half_listing(self):
+        from marquee.backends import BackendError
+        copier = self.wired(self.Flaky("listPath", times=2,
+                                       existing={"roms": {"a.zip": 1}}))
+        with pytest.raises(BackendError, match="Lost the share"):
+            copier.index()
+
+    def test_close_closes_the_session(self):
+        conn = FakeConnection()
+        conn.closed = False
+        conn.close = lambda: setattr(conn, "closed", True)
+        copier = build("smb://nas/Share/roms", conn)
+        copier.close()
+        assert conn.closed and copier.conn is None
+        copier.close()                # twice is harmless

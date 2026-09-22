@@ -2,7 +2,7 @@
 
 import pytest
 
-from marquee import catalog, pipeline, sync
+from marquee import catalog, pipeline, sync, verify
 from marquee import plan as planning
 
 
@@ -609,3 +609,73 @@ class TestADamagedDiskIsReplaced:
         report = sync.compare(plan, dict(here))
         assert kinds(report)[disk] == sync.UPDATE
         assert kinds(report)[f"{item.folder}/twodisk.zip"] == sync.KEEP
+
+    def test_the_healthy_zip_beside_it_is_not_replaced(self, plan):
+        """verify marks the whole machine damaged for a bad disk; the zip had been
+        replaced on every transfer since, though nothing was wrong with it."""
+        item = next(one for one in plan.items if one.name == "twodisk")
+        disk = f"{item.folder}/twodisk/ok.chd"
+        here = {relpath: size for _src, relpath, size in plan.files()}
+        item.damaged_disks = [disk]
+        item.state, item.rom_state = verify.DAMAGED, verify.CURRENT
+        report = sync.compare(plan, dict(here))
+        assert kinds(report)[disk] == sync.UPDATE
+        assert kinds(report)[f"{item.folder}/twodisk.zip"] == sync.KEEP
+
+
+class TestWhatTheCheckFoundWrongIsStillWanted:
+    """A zip the check called stale, or a disk it found damaged, with nothing in the
+    source folder to replace it. The fallback pass kept it and called the machine
+    settled, so every download road said "nothing to fetch"."""
+
+    class Item:
+        def __init__(self, state="", damaged=()):
+            self.name, self.folder = "galaga", "Shooter"
+            self.state, self.damaged_disks = state, list(damaged)
+            self.in_library = False
+
+        def wanted_paths(self):
+            return ["Shooter/galaga.zip", "Shooter/galaga/gdisk.chd"]
+
+    def compare(self, item):
+        class Plan:
+            items = []
+            absent_items = [item]
+
+            def files(self):
+                return iter(())
+        existing = {"Shooter/galaga.zip": 10, "Shooter/galaga/gdisk.chd": 100}
+        return sync.compare(Plan(), existing)
+
+    def test_a_healthy_machine_is_settled(self):
+        item = self.Item()
+        self.compare(item)
+        assert item.settled and item.in_library and item.unsettled == []
+
+    def test_a_stale_zip_is_kept_but_still_wanted(self):
+        item = self.Item(state=verify.STALE)
+        report = self.compare(item)
+        assert kinds(report)["Shooter/galaga.zip"] == sync.KEEP, "it still plays"
+        assert item.unsettled == ["Shooter/galaga.zip"]
+        assert not item.settled and not item.in_library
+
+    def test_a_damaged_disk_is_still_wanted(self):
+        item = self.Item(damaged=["Shooter/galaga/gdisk.chd"])
+        self.compare(item)
+        assert item.unsettled == ["Shooter/galaga/gdisk.chd"]
+
+    def test_the_download_roads_see_them(self):
+        from marquee.plan import PlannedItem
+        item = PlannedItem(name="galaga", description="Galaga", folder="Shooter",
+                           category="Shooter", genre="Shooter", disks=["gdisk"],
+                           state=verify.STALE, damaged_disks=["Shooter/galaga/gdisk.chd"])
+        class Plan:
+            items = []
+            absent_items = [item]
+
+            def files(self):
+                return iter(())
+        sync.compare(Plan(), {"Shooter/galaga.zip": 10, "Shooter/galaga/gdisk.chd": 100})
+        assert item.rom_to_fetch is True
+        assert item.disks_to_fetch == ["gdisk"]
+

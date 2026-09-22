@@ -194,3 +194,52 @@ class TestOneGameOneRom:
 
     def test_an_empty_list_is_harmless(self):
         assert catalog.collapse_clones({}) == {}
+
+
+class TestADiskMergedUnderAnotherName:
+    """konam80a names its disk 826aaa01; the merged set holds it as its parent's
+    konam80s/826eaa01.chd. Looked for by its own name it was missing for ever."""
+
+    RECORD = {"n": "konam80a", "c": "konam80s", "d": "Konami 80's AC Special (Asia)",
+              "st": "good", "em": "good", "dk": [["826aaa01", "826eaa01"]]}
+
+    def test_the_file_is_named_as_the_set_holds_it(self):
+        from marquee import catalog
+        entry = catalog._entry(self.RECORD)
+        assert entry["chd_disks"] == ["826eaa01"]
+        assert entry["chd_folder"] == "konam80s"
+
+    def test_the_plan_finds_it_in_the_parents_folder(self, tmp_path):
+        from marquee import catalog
+        from marquee import plan as planning
+        (tmp_path / "konam80s").mkdir()
+        (tmp_path / "konam80s" / "826eaa01.chd").write_bytes(b"MComprHD")
+        disks = catalog._entry(self.RECORD)["chd_disks"]
+        found, missing = planning.resolve_disks("konam80a", "konam80s", disks,
+                                                str(tmp_path))
+        assert missing == [] and found
+
+    def test_a_disk_merged_under_its_own_name_is_unchanged(self):
+        from marquee import catalog
+        record = dict(self.RECORD, dk=[["same", "same"], ["own", None]])
+        assert catalog._entry(record)["chd_disks"] == ["same", "own"]
+
+
+class TestNamesAShareWillTake:
+    """catlist files the TTL boards under "TTL * Ball & Paddle"; '*' is a wildcard to
+    SMB and illegal on Windows, so the folder could not be made on a console's share."""
+
+    def test_the_wildcard_goes(self):
+        from marquee import catalog
+        folder, _mature = catalog.folder_name("TTL * Ball & Paddle / Breakout")
+        assert folder == "TTL Ball & Paddle/Breakout"
+
+    def test_every_character_windows_refuses_goes(self):
+        from marquee import catalog
+        folder, _mature = catalog.folder_name('A<b>c:d"e|f?g / h\\\\i')
+        assert not set('<>:"|?*\\\\') & set(folder)
+
+    def test_the_mature_marker_still_marks(self):
+        from marquee import catalog
+        folder, mature = catalog.folder_name("Puzzle / Drop * Mature *")
+        assert mature and folder == "ZZ-Adult/Puzzle/Drop"

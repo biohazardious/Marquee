@@ -20,6 +20,8 @@ const V = {
   // Deleting is never the default, and never carried over from a run.
   remove: false,
   // The delete has to be asked for twice: once with the box, once on the button.
+  // Holds the number of files the second click was armed for, so a reload that
+  // changes what would be deleted asks again.
   armed: false,
 };
 
@@ -32,6 +34,9 @@ const TONE = {
 export async function load(kind) {
   if (lock.on) return;
   if (kind !== undefined) { V.kind = kind; V.offset = 0; }
+  // A confirmation belongs to the figures it was given against. Kept across a
+  // reload, one click deleted whatever the new plan said to.
+  V.armed = false;
   V.busy = true;
   render();
   try {
@@ -361,18 +366,19 @@ function goPanel(data) {
     text: busy ? 'Busy…' : 'Start transfer',
   });
   const deleting = Boolean(V.remove && data.delete_bytes);
+  const orphans = data.kinds.find((one) => one.kind === 'orphan') || { files: 0 };
+  const armed = deleting && V.armed === orphans.files;
   if (deleting) {
-    const orphans = data.kinds.find((one) => one.kind === 'orphan') || { files: 0 };
-    go.textContent = V.armed
+    go.textContent = armed
       ? `Delete ${count(orphans.files)} files and start — sure?`
       : `Delete ${count(orphans.files)} files and start`;
     go.classList.add('danger');
   }
   go.onclick = async () => {
-    if (deleting && !V.armed) {
+    if (deleting && !armed) {
       // The first click arms it; the second does it. Ticking the box was already a
       // choice, but a run that removes 11 GB should not start on one press.
-      V.armed = true;
+      V.armed = orphans.files;
       render();
       return;
     }

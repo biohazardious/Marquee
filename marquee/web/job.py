@@ -6,6 +6,7 @@ snapshot the page can render.
 """
 import os
 import threading
+import time
 import traceback
 
 from .. import backends, catalog, pipeline, sources, sync, verify
@@ -57,6 +58,8 @@ class Job:
         # Always present. `copy` reads it to find out which release the library is
         # being written as, and reached for it before any plan had ever run.
         self.config = None
+        # When the plan in hand was started, to tell settings saved after it.
+        self.planned_at = None
         self.events = []
         self._described = {}
         self.sequence = 0
@@ -134,6 +137,7 @@ class Job:
         def prepare():
             self._reset_locked()
             self.config = config
+            self.planned_at = time.time()
 
         def work():
             plan, resolution = pipeline.build_plan(config, options, QueueReporter(self))
@@ -1087,8 +1091,15 @@ def built_from(config):
         return None
     return {
         "rom_dir": config.rom_dir or "", "chd_dir": config.chd_dir or "",
-        "copy_path": config.copy_path or "", "mame_version": config.mame_version or "",
+        # Hidden the way the settings are, or every poll hands the library's
+        # password back out -- and the page compares the two.
+        "copy_path": backends.redact(config.copy_path or ""),
+        "mame_version": config.mame_version or "",
         "allow_mature": bool(config.allow_mature),
+        # Both reshape the plan -- which clones survive, which folder adult games
+        # land in -- and neither was here, so changing one never made a plan stale.
+        "parents_only": bool(config.parents_only),
+        "mature_rom_folder": config.mature_rom_folder or "",
         "blacklist_genres": sorted(config.blacklist_genres or []),
         "blacklist_categories": sorted(config.blacklist_categories or []),
         "blacklist_roms": sorted(config.blacklist_roms or []),

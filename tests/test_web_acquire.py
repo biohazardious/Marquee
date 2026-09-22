@@ -7,6 +7,7 @@ touches the network.
 """
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -16,6 +17,7 @@ from http.server import ThreadingHTTPServer
 import pytest
 
 from marquee import config as configuration
+from marquee.download.qbittorrent import QBittorrentError
 from marquee.web.server import Application, Handler
 
 
@@ -388,11 +390,11 @@ class FakeClient:
     def __init__(self, machines, disks=(), present=True):
         self.files_list = [
             {"index": i, "path": f"MAME 0.289 ROMs (non-merged)/{name}.zip",
-             "size": 1000, "piece_range": [i, i], "progress": 0.0}
+             "size": 1000, "piece_range": [i, i], "progress": 0.0, "priority": 1}
             for i, name in enumerate(list(machines) + list(self.BYSTANDERS))]
         self.chd_list = [
             {"index": i, "path": f"MAME 0.289 CHDs (merged)/{folder}/{disk}.chd",
-             "size": 5000, "piece_range": [i, i], "progress": 0.0}
+             "size": 5000, "piece_range": [i, i], "progress": 0.0, "priority": 1}
             for i, (folder, disk) in enumerate(disks)]
         # Whether the release is already in the client. A torrent this tool did not
         # add may be seeding, and that is what decides whether files may be dropped.
@@ -401,16 +403,25 @@ class FakeClient:
         # a torrent ours to narrow; anything else is the user's and is only added to.
         self.category_of = None
         self.added, self.included, self.deselected, self.started = [], [], [], []
-        self.narrowed = []
+        self.narrowed, self.deleted = [], []
+        # Torrents this client has been handed, by infohash, with their category. The
+        # CHD set is only ever there once something added it.
+        self.known = {}
+        # Whether metadata ever arrives for a magnet added from now on.
+        self.metadata_arrives = True
 
     def _table(self, infohash):
         return self.chd_list if infohash.startswith("cd") else self.files_list
 
     def one(self, infohash):
-        if not self.present:
+        if infohash in self.known:
+            category = self.known[infohash]
+        elif self.present:
+            category = self.category_of
+        else:
             return None
         name = "MAME 0.289 ROMs (non-merged)"
-        return {"hash": infohash, "name": name, "category": self.category_of,
+        return {"hash": infohash, "name": name, "category": category,
                 "save_path": "/data/torrents",
                 "content_path": f"/data/torrents/{name}"}
 
@@ -419,11 +430,19 @@ class FakeClient:
 
     def add(self, *args, **kwargs):
         self.added.append((args, kwargs))
-        return "b3" + "0" * 38
+        found = re.search(r"btih:([0-9a-fA-F]{40})", str(args[0]) if args else "")
+        infohash = found.group(1) if found else "b3" + "0" * 38
+        self.known[infohash] = kwargs.get("category")
+        return infohash
 
     def wait_for_metadata(self, infohash, **kwargs):
-        self.present = True
+        if not self.metadata_arrives:
+            raise QBittorrentError(f"No metadata for {infohash[:12]} after 180s.")
         return self._table(infohash)
+
+    def delete(self, infohash, delete_files=False):
+        self.deleted.append((infohash, delete_files))
+        self.known.pop(infohash, None)
 
     def files(self, infohash):
         return self._table(infohash)
@@ -444,6 +463,8 @@ class FakeClient:
         keep = {entry["index"] for entry in table
                 if entry["index"] in wanted or entry["progress"] >= 1.0}
         skip = [entry["index"] for entry in table if entry["index"] not in keep]
+        for entry in table:
+            entry["priority"] = 1 if entry["index"] in keep else 0
         self.narrowed.append((sorted(keep), skip))
         return {"selected": len(keep), "skipped": len(skip),
                 "wanted": len(wanted & keep), "kept_complete": len(keep - wanted)}
@@ -824,6 +845,21 @@ class TestDownloadSelection:
             post(base, "/api/download", {"filters": {}})
         assert error.value.code == 400
 
+    def test_a_set_that_has_none_of_them_is_still_disarmed(self, wired):
+        """Routine for the CHD set: the wanted disks are not in it yet. It was added
+        to find that out, and used to be left with every file selected."""
+        base, app, client = wired
+        client.files_list[:] = [
+            {"index": i, "path": f"MAME 0.289 ROMs (non-merged)/other{i}.zip",
+             "size": 1000, "piece_range": [i, i], "progress": 0.0, "priority": 1}
+            for i in range(3)]
+        with pytest.raises(urllib.error.HTTPError) as error:
+            post(base, "/api/download", {"filters": {}, "dry_run": True})
+        assert b"has none of them" in error.value.read()
+        keep, skip = client.narrowed[-1]
+        assert len(keep) == 1 and len(skip) == 2
+        assert client.started == []
+
 
 class TestPricingTheSet:
     """Reading the release's file table is metadata only -- and must stay that way."""
@@ -875,6 +911,71 @@ class TestPricingTheSet:
         assert len(keep) == 1
         assert skip
         assert client.started == []
+
+    def test_a_listed_chd_set_is_priced_and_disarmed_too(self, wired):
+        """Reading the CHD set crashed on an unpacking error the thread swallowed:
+        no prices, no error, and a 1.3 TB set left with every file selected."""
+        base, app, client = wired
+        client.chd_list[:] = [
+            {"index": i, "path": f"MAME 0.289 CHDs (merged)/{folder}/{disk}.chd",
+             "size": 5000, "piece_range": [i, i], "progress": 0.0, "priority": 1}
+            for i, (folder, disk) in enumerate([("area51", "area51"),
+                                                ("kinst", "kinst"), ("gauntdl", "gdl")])]
+        chd_hash = "cd" + "0" * 38
+        app.releases["data"].append({
+            "kind": "chds", "version": "0.289", "variant": "merged",
+            "full_set": True, "name": "MAME 0.289 CHDs (merged)",
+            "infohash": chd_hash, "magnet": "magnet:?xt=urn:btih:" + chd_hash,
+            "from_version": None, "datfile": None})
+        post(base, "/api/catalogue", {})
+        self.wait(app)
+        assert app.catalogue["error"] is None
+        assert app.catalogue["disk_files"] == 3
+        assert [entry["priority"] for entry in client.chd_list].count(1) == 1
+
+    def test_an_unexpected_failure_is_reported_not_swallowed(self, wired):
+        base, app, client = wired
+
+        def broken(infohash):
+            raise RuntimeError("boom")
+        client.files = broken
+        client.wait_for_metadata = lambda infohash, **kwargs: []
+        post(base, "/api/catalogue", {})
+        self.wait(app)
+        assert "boom" in (app.catalogue["error"] or "")
+
+    def test_a_set_whose_metadata_never_came_is_taken_back_out(self, wired):
+        """Nothing can be narrowed before the file table is known, and once it is,
+        the set sits there with everything selected. It was added a moment ago by
+        this call, so it is removed -- without its files, of which there are none."""
+        base, app, client = wired
+        client.metadata_arrives = False
+        post(base, "/api/catalogue", {})
+        self.wait(app)
+        assert "metadata" in (app.catalogue["error"] or "")
+        assert client.deleted == [("b3" + "0" * 38, False)]
+
+    def test_a_set_left_fully_selected_by_an_earlier_call_is_disarmed(self, wired):
+        """In our category, every file selected, nothing fetched: an earlier call
+        added it and never narrowed it. That this call did not add it is no reason
+        to leave 1.3 TB one click away."""
+        base, app, client = wired
+        client.present = True
+        client.category_of = "marquee"
+        post(base, "/api/catalogue", {})
+        self.wait(app)
+        assert client.added == []
+        keep, _skip = client.narrowed[-1]
+        assert len(keep) == 1
+
+    def test_a_set_of_ours_already_narrowed_is_left_as_it_is(self, wired):
+        base, app, client = wired
+        client.present = True
+        client.category_of = "marquee"
+        client.files_list[0]["priority"] = 0
+        post(base, "/api/catalogue", {})
+        self.wait(app)
+        assert client.narrowed == []
 
 
 class TestWhereItLands:

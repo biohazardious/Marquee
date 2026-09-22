@@ -1,3 +1,4 @@
+import errno
 import os
 import shutil
 import time
@@ -52,15 +53,12 @@ class LocalCopy(CopyBackend):
 
         os.makedirs(os.path.dirname(dest), exist_ok=True)
 
-        # Replace, never overwrite in place. A destination file may be a hardlink --
+        # Replace, never overwrite in place: a destination file may be a hardlink --
         # to the source itself, or to a copy elsewhere -- and writing into it would
-        # write through to every one of them. Unlinking first breaks that share.
-        if os.path.lexists(dest):
-            try:
-                os.remove(dest)
-            except OSError:
-                pass
-
+        # write through to every one of them. Every road below writes a new file
+        # under another name and renames it over `dest`, which breaks that share
+        # without removing the old copy first: deleting it up front lost it for good
+        # whenever the copy then failed, a full disk being the usual reason.
         if self.hardlink and self._try_link(src, dest):
             self.linked += 1
             if on_bytes:
@@ -93,6 +91,7 @@ class LocalCopy(CopyBackend):
         an SMB mount, a read-only source -- and every one of them just means copying
         instead. Only the first is worth telling the user about.
         """
+        temp = dest + ".link"
         try:
             if os.stat(src).st_dev != os.stat(os.path.dirname(dest)).st_dev:
                 if self.linked == 0 and not getattr(self, "_said_cross_device", False):
@@ -101,9 +100,30 @@ class LocalCopy(CopyBackend):
                         "Source and destination are on different filesystems, so files "
                         "are copied rather than linked.")
                 return False
-            os.link(src, dest)
+            if os.path.lexists(temp):
+                os.remove(temp)
+            os.link(src, temp)
+            os.replace(temp, dest)
+            # Already the same file: rename(2) then does nothing and leaves `temp`.
+            if os.path.lexists(temp):
+                os.remove(temp)
             return True
-        except OSError:
+        except OSError as error:
+            try:
+                if os.path.lexists(temp):
+                    os.remove(temp)
+            except OSError:
+                pass
+            if error.errno == errno.EXDEV and not getattr(self, "_said_exdev", False):
+                # Same device number, and still refused: two bind mounts of one
+                # filesystem, which is what the shipped compose file sets up. Every
+                # file is then copied in full, and nobody was told.
+                self._said_exdev = True
+                self.reporter.warn(
+                    "Hardlinks were refused across two mounts of the same filesystem, "
+                    "so files are being copied in full. Mount the torrent folder and "
+                    "the library as one volume (for example /data/torrents and "
+                    "/data/library) to link them.")
             return False
 
     def _copy_whole(self, src, dest):
@@ -218,11 +238,6 @@ class LocalCopy(CopyBackend):
         except OSError:
             pass
         os.makedirs(os.path.dirname(target), exist_ok=True)
-        if os.path.lexists(target):
-            try:
-                os.remove(target)
-            except OSError:
-                pass
         if self.hardlink and self._try_link(source, target):
             return True
         self._copy_whole(source, target)

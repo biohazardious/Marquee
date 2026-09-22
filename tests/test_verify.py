@@ -342,6 +342,9 @@ class TestADiskInTheLibrary:
         assert counts == {verify.DAMAGED: 1}
         assert item.damaged_disks == [relpath]
         assert any("ok.chd: zero-filled" in line for line in item.state_detail)
+        # The machine is damaged; the zip, which is not what was wrong, keeps its own
+        # verdict so the next transfer does not replace it too.
+        assert item.rom_state != verify.DAMAGED
 
     def test_a_disk_on_its_way_to_a_new_folder_is_checked_where_it_is(self, tmp_path,
                                                                         categorised, config,

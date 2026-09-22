@@ -15,15 +15,25 @@ folders alive after the last game moved out of them, because the folder is no lo
 empty and nothing may prune it.
 """
 import os
+import posixpath
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 from . import art, sources
+from .errors import MarqueeError
 from .reporting import Reporter
 
 NAME = "gamelist.xml"
 # Where the pictures go, relative to the library root.
 IMAGE_DIR = "images"
+# What this module writes into an entry, and so what a rewrite may replace. Everything
+# else -- <favorite>, <playcount>, <lastplayed>, <hidden>, a scraper's <rating> or
+# <video> -- was put there by EmulationStation or the user and is kept.
+OWNED = ("path", "name", "desc", "releasedate", "developer", "publisher", "genre",
+         "players")
+# Written when there is something to say, but never taken away: a picture a scraper
+# placed is better than none, and an adult flag somebody set by hand stays set.
+OWNED_WHEN_SET = ("image", "adult")
 
 
 def _text(parent, tag, value):
@@ -120,17 +130,97 @@ def write(items, backend, kind=art.DEFAULT_KIND, copy_images=True, reporter=None
     """
     reporter = reporter or Reporter()
     items = list(getattr(items, "library_items", items))
+    # Read first: a list that cannot be read is left alone rather than replaced, and
+    # nothing is worth placing pictures for until that is known.
+    existing = _existing(backend)
     images, pictures = {}, 0
     if copy_images:
         images, pictures = _place_images(items, backend, kind, on_progress)
 
-    body = render(document(items, images))
+    fresh = document(items, images)
+    body = render(merge(existing, fresh) if existing is not None else fresh)
     backend.write_text(NAME, body)
 
     reporter.info(f"Wrote {NAME} for {len(items)} game(s)"
                   + (f" and placed {pictures} picture(s)." if copy_images else "."))
     return {"games": len(items), "images": pictures,
             "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
+def _existing(backend):
+    """The gamelist already in the library, parsed, or None when there is none.
+
+    EmulationStation writes favourites, play counts and hidden flags into this same
+    file. Rebuilding it from scratch wiped them on every transfer, so a list that is
+    there but cannot be read stops the write instead of being overwritten.
+    """
+    body = backend.read_file(NAME)
+    if body is None or not body.strip():
+        return None
+    try:
+        return ET.fromstring(body)
+    except ET.ParseError as error:
+        raise MarqueeError(
+            f"{NAME} in the library could not be read ({error}); it was left as it "
+            f"is, since it holds EmulationStation's favourites and play counts. "
+            f"Move it aside to have a new one written.") from error
+
+
+def _path_of(game):
+    path = (game.findtext("path") or "").strip().replace("\\", "/")
+    return path[2:] if path.startswith("./") else path
+
+
+def merge(existing, fresh):
+    """`fresh` with everything EmulationStation or the user added to `existing` kept.
+
+    An entry is matched on its path, then -- for a game that moved genre folder
+    between releases -- on its file name when only one entry has it. What is matched
+    keeps every field this module does not write and its attributes. Entries that
+    match nothing (a game that left the library, a <folder>, anything another tool
+    added) are kept as they were: EmulationStation skips a path whose file is gone,
+    and a game that comes back finds its favourite still set.
+    """
+    old = [child for child in existing if child.tag == "game"]
+    by_path, by_file = {}, {}
+    for game in old:
+        path = _path_of(game)
+        by_path.setdefault(path, game)
+        by_file.setdefault(posixpath.basename(path).lower(), []).append(game)
+
+    new = list(fresh)
+    matched, used = {}, set()
+    for index, game in enumerate(new):
+        found = by_path.get(_path_of(game))
+        if found is not None and id(found) not in used:
+            matched[index] = found
+            used.add(id(found))
+    for index, game in enumerate(new):
+        if index in matched:
+            continue
+        name = posixpath.basename(_path_of(game)).lower()
+        candidates = [entry for entry in by_file.get(name, ()) if id(entry) not in used]
+        if len(candidates) == 1:
+            matched[index] = candidates[0]
+            used.add(id(candidates[0]))
+
+    root = ET.Element(existing.tag or "gameList", dict(existing.attrib))
+    for index, game in enumerate(new):
+        previous = matched.get(index)
+        if previous is not None:
+            game.attrib = {**previous.attrib, **game.attrib}
+            written = {child.tag for child in game}
+            for child in previous:
+                if child.tag in OWNED:
+                    continue
+                if child.tag in OWNED_WHEN_SET and child.tag in written:
+                    continue
+                game.append(child)
+        root.append(game)
+    for child in existing:
+        if id(child) not in used:
+            root.append(child)
+    return root
 
 
 def _place_images(items, backend, kind, on_progress=None):

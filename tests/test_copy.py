@@ -459,6 +459,52 @@ class TestHardlinking:
         assert target.stat().st_nlink == 2
         assert backend.linked == 1
 
+    def test_two_mounts_of_one_filesystem_are_named_not_silently_copied(
+            self, tmp_path, monkeypatch):
+        """Same device number, and link(2) still says EXDEV: the shipped compose file
+        mounts /downloads and /library separately. Every file was copied in full and
+        nothing said so."""
+        import errno
+        source = self.source(tmp_path)
+        reporter = CollectingReporter()
+        backend = LocalCopy(str(tmp_path / "library"), hardlink=True, reporter=reporter)
+
+        def refused(_src, _dst):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        monkeypatch.setattr(os, "link", refused)
+        backend.copy(str(source), "Maze")
+        backend.copy(str(source), "Shooter")
+        target = tmp_path / "library" / "Maze" / "galaga.zip"
+        assert target.read_bytes() == source.read_bytes()
+        assert reporter.text.count("one volume") == 1, "said once, not per file"
+        assert not list((tmp_path / "library").rglob("*.link"))
+
+    def test_a_failed_replacement_keeps_the_old_copy(self, tmp_path, monkeypatch):
+        """The old file used to be removed before the new one existed: a full disk
+        then lost both."""
+        import shutil
+        source = self.source(tmp_path)
+        library = tmp_path / "library" / "Maze"
+        library.mkdir(parents=True)
+        (library / "galaga.zip").write_bytes(b"old")
+        backend = LocalCopy(str(tmp_path / "library"))
+
+        def full(*_args, **_kwargs):
+            raise OSError(28, "No space left on device")
+        monkeypatch.setattr(shutil, "copy2", full)
+        with pytest.raises(OSError):
+            backend.copy(str(source), "Maze")
+        assert (library / "galaga.zip").read_bytes() == b"old"
+
+    def test_relinking_the_same_file_leaves_nothing_behind(self, tmp_path):
+        source = self.source(tmp_path)
+        backend = LocalCopy(str(tmp_path / "library"), hardlink=True)
+        backend.copy(str(source), "Maze")
+        backend.copy(str(source), "Maze", replace=True)
+        target = tmp_path / "library" / "Maze" / "galaga.zip"
+        assert target.stat().st_ino == source.stat().st_ino
+        assert not list((tmp_path / "library").rglob("*.link"))
+
     def test_removing_the_library_copy_leaves_the_torrent_file(self, tmp_path):
         source = self.source(tmp_path)
         backend = LocalCopy(str(tmp_path / "library"), hardlink=True)

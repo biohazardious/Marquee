@@ -11,6 +11,7 @@ import pytest
 
 from marquee import art, gamelist
 from marquee.backends.local import LocalCopy
+from marquee.errors import MarqueeError
 from marquee.plan import CopyPlan, PlannedItem
 
 
@@ -183,6 +184,98 @@ class TestWrite:
         gamelist.write(plan, backend,
                        on_progress=lambda done, total: seen.append((done, total)))
         assert seen[-1] == (2, 2)
+
+
+class TestMerge:
+    """EmulationStation keeps favourites, play counts and hidden flags in the same file
+    a transfer writes. Rebuilding it from scratch wiped them on every run."""
+
+    @pytest.fixture
+    def library(self, tmp_path):
+        root = tmp_path / "library"
+        root.mkdir()
+        return LocalCopy(str(root)), root
+
+    def seed(self, root, body):
+        (root / "gamelist.xml").write_text(
+            '<?xml version="1.0"?>\n<gameList>' + body + "</gameList>\n")
+
+    def games(self, root):
+        return {field(game, "path"): game for game in
+                ET.parse(root / "gamelist.xml").getroot().iter("game")}
+
+    def test_what_emulationstation_added_survives_a_rewrite(self, library):
+        backend, root = library
+        self.seed(root, '<game id="42" source="ScreenScraper">'
+                        '<path>./Platform/Shooter Scrolling/mslug.zip</path>'
+                        '<name>Old title</name><favorite>true</favorite>'
+                        '<playcount>7</playcount><lastplayed>20260901T120000</lastplayed>'
+                        '<hidden>false</hidden><rating>0.9</rating></game>')
+        gamelist.write(CopyPlan(items=[machine()]), backend, copy_images=False)
+        game = self.games(root)["./Platform/Shooter Scrolling/mslug.zip"]
+        assert field(game, "favorite") == "true"
+        assert field(game, "playcount") == "7"
+        assert field(game, "lastplayed") == "20260901T120000"
+        assert field(game, "rating") == "0.9"
+        assert game.get("id") == "42" and game.get("source") == "ScreenScraper"
+        # What this module writes is refreshed, and not duplicated.
+        assert [n.text for n in game.findall("name")] == \
+            ["Metal Slug - Super Vehicle-001"]
+
+    def test_a_game_that_moved_folder_keeps_its_favourite(self, library):
+        # catlist renames genres between releases; the entry follows the file.
+        backend, root = library
+        self.seed(root, "<game><path>./Casino/mslug.zip</path>"
+                        "<favorite>true</favorite></game>")
+        gamelist.write(CopyPlan(items=[machine()]), backend, copy_images=False)
+        games = self.games(root)
+        assert "./Casino/mslug.zip" not in games
+        assert field(games["./Platform/Shooter Scrolling/mslug.zip"], "favorite") == "true"
+
+    def test_entries_it_does_not_know_are_kept(self, library):
+        backend, root = library
+        self.seed(root, "<folder><path>./Platform</path><name>P</name></folder>"
+                        "<game><path>./Maze/gone.zip</path><favorite>true</favorite>"
+                        "</game>")
+        gamelist.write(CopyPlan(items=[machine()]), backend, copy_images=False)
+        tree = ET.parse(root / "gamelist.xml").getroot()
+        assert tree.find("folder") is not None
+        assert field(self.games(root)["./Maze/gone.zip"], "favorite") == "true"
+
+    def test_a_scraped_picture_is_not_taken_away(self, library, tmp_path, monkeypatch):
+        backend, root = library
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        self.seed(root, "<game><path>./Platform/Shooter Scrolling/mslug.zip</path>"
+                        "<image>./media/mslug.jpg</image></game>")
+        gamelist.write(CopyPlan(items=[machine()]), backend)
+        game = self.games(root)["./Platform/Shooter Scrolling/mslug.zip"]
+        assert [n.text for n in game.findall("image")] == ["./media/mslug.jpg"]
+
+    def test_our_picture_replaces_the_old_one(self, library, tmp_path, monkeypatch):
+        backend, root = library
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+        picture = art.path_for("Metal Slug - Super Vehicle-001")
+        os.makedirs(os.path.dirname(picture), exist_ok=True)
+        with open(picture, "wb") as handle:
+            handle.write(b"\x89PNG\r\n\x1a\nx")
+        self.seed(root, "<game><path>./Platform/Shooter Scrolling/mslug.zip</path>"
+                        "<image>./media/mslug.jpg</image></game>")
+        gamelist.write(CopyPlan(items=[machine()]), backend)
+        game = self.games(root)["./Platform/Shooter Scrolling/mslug.zip"]
+        assert [n.text for n in game.findall("image")] == ["./images/mslug.png"]
+
+    def test_a_list_it_cannot_read_is_left_alone(self, library):
+        backend, root = library
+        (root / "gamelist.xml").write_text("<gameList><game><favorite>")
+        with pytest.raises(MarqueeError, match="left as it is"):
+            gamelist.write(CopyPlan(items=[machine()]), backend, copy_images=False)
+        assert (root / "gamelist.xml").read_text() == "<gameList><game><favorite>"
+
+    def test_an_empty_file_is_simply_replaced(self, library):
+        backend, root = library
+        (root / "gamelist.xml").write_text("")
+        gamelist.write(CopyPlan(items=[machine()]), backend, copy_images=False)
+        assert "./Platform/Shooter Scrolling/mslug.zip" in self.games(root)
 
 
 class TestMatureMarker:

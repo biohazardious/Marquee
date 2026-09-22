@@ -255,6 +255,7 @@ def check_library(items, manifests, root, reporter=None, should_continue=None,
         here = where.get(item.name) or f"{item.folder}/{item.name}.zip"
         path = here if opener else os.path.join(root, here.replace("/", os.sep))
         state, detail = check(path, manifests.get(item.name), opener)
+        item.rom_state = state
         item.damaged_disks = []
         disks = list(item.wanted_paths())[1:] if hasattr(item, "wanted_paths") else []
         for relpath in disks:

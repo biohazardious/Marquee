@@ -104,7 +104,13 @@ class Config:
 
     def with_overrides(self, **overrides):
         """A copy with the given non-None values applied."""
-        return replace(self, **{k: v for k, v in overrides.items() if v is not None})
+        values = {k: v for k, v in overrides.items() if v is not None}
+        # A disk folder that is only the ROM folder by default follows it: moving
+        # the ROM folder used to leave the disks being looked for in the old one.
+        if "rom_dir" in values and "chd_dir" not in values \
+                and self.chd_dir == self.rom_dir:
+            values["chd_dir"] = None
+        return replace(self, **values)
 
 
 def read_settings_file(path):
@@ -313,7 +319,10 @@ def _format_list(values):
 def write_settings_file(path, config):
     """Write a Config back out as a settings.ini."""
     body = SETTINGS_TEMPLATE.format(
-        rom_dir=_blank(config.rom_dir), chd_dir=_blank(config.chd_dir),
+        rom_dir=_blank(config.rom_dir),
+        # Blank when it is the ROM folder: that is what blank means, and writing the
+        # derived value out pinned it there after the ROM folder moved.
+        chd_dir=_blank(None if config.chd_dir == config.rom_dir else config.chd_dir),
         copy_path=_blank(config.copy_path), overrides=_overrides(config),
         allow_mature=config.allow_mature,
         mature_rom_folder=_blank(config.mature_rom_folder),

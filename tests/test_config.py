@@ -354,3 +354,27 @@ class TestSavingIsAllOrNothing:
         monkeypatch.setattr(os, "replace", real_replace)
         assert path.read_text() == before
         assert not (tmp_path / "settings.ini.part").exists()
+
+
+class TestTheDiskFolderFollowsTheRomFolder:
+    """A blank chd_dir is the ROM folder. Saved, it used to be written out as that
+    folder, and moving the ROM folder then left the disks looked for in the old one."""
+
+    def test_a_default_is_saved_as_blank(self, tmp_path):
+        path = tmp_path / "settings.ini"
+        configuration.write_settings_file(str(path), Config(rom_dir="/dl/a", copy_path="/o"))
+        assert "chd_dir = \n" in path.read_text() or "chd_dir =\n" in path.read_text()
+        back = configuration.load(str(path))
+        assert back.chd_dir == "/dl/a"
+        assert back.with_overrides(rom_dir="/dl/b").chd_dir == "/dl/b"
+
+    def test_an_override_of_the_rom_folder_carries_the_disks(self):
+        config = Config(rom_dir="/dl/a", copy_path="/o")
+        assert config.with_overrides(rom_dir="/dl/b").chd_dir == "/dl/b"
+
+    def test_a_folder_of_its_own_stays(self, tmp_path):
+        path = tmp_path / "settings.ini"
+        configuration.write_settings_file(
+            str(path), Config(rom_dir="/dl/a", chd_dir="/disks", copy_path="/o"))
+        back = configuration.load(str(path))
+        assert back.with_overrides(rom_dir="/dl/b").chd_dir == "/disks"

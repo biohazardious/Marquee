@@ -667,6 +667,18 @@ export function dirty() {
   return seeded !== null && JSON.stringify(lists()) !== seeded;
 }
 
+/* Whether the saved lists are exactly what is on screen: a save has caught up with
+   it. Nothing is lost by seeding from them then, and not doing so left the page
+   "dirty" for ever after the first save -- so it stopped following the file, and a
+   "Put back" on Left out was undone by the next Build plan. */
+export function matches({ genres, categories, roms }) {
+  const sorted = (list) => JSON.stringify([...(list || [])].sort());
+  const now = lists();
+  return sorted(now.blacklist_genres) === sorted(genres)
+    && sorted(now.blacklist_categories) === sorted(categories)
+    && sorted(now.blacklist_roms) === sorted(roms);
+}
+
 
 /* The filter bar. Same questions the library asks, because the answer to "which of
    these do I actually want" is the same question in both places -- it is only the

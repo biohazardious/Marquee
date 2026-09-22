@@ -12,12 +12,26 @@ from urllib.parse import unquote
 
 from ..errors import ConfigError
 from ..reporting import Reporter
-from . import BackendError, CopyBackend, is_managed
+from . import BackendError, CopyBackend, is_managed, redact
 
 # sftp|ssh://[user[:password]@]host[:port]/path
 CONN_STR_RE = re.compile(r'(?:sftp|ssh)://(?:([^/]*)@)?([^/:]+)(?::(\d+))?(?:/(.*))?$')
 
 CHUNK_SIZE = 8 * 1024 * 1024
+
+
+def _failures():
+    """What a call over SFTP can fail with. A dropped transport is paramiko's own
+    SSHException or an EOFError, neither of them an IOError -- so a connection lost
+    mid-run escaped every handler here and ended the whole run."""
+    try:
+        import paramiko
+    except ImportError:
+        return (IOError, OSError, EOFError)
+    return (IOError, OSError, EOFError, paramiko.SSHException)
+
+
+FAILURES = _failures()
 
 
 def _paramiko():
@@ -43,8 +57,8 @@ class SftpCopy(CopyBackend):
         match = CONN_STR_RE.match(conn_str)
         if not match:
             raise ConfigError(
-                f"Not a usable SFTP destination: {conn_str!r}. Expected something like "
-                f"sftp://user@host/srv/roms/mame")
+                f"Not a usable SFTP destination: {redact(conn_str)!r}. Expected "
+                f"something like sftp://user@host/srv/roms/mame")
         userinfo, host, port, path = match.groups()
         username, _, password = (userinfo or "").partition(":")
         self.username = unquote(username) or os.environ.get("USER", "root")
@@ -166,6 +180,10 @@ class SftpCopy(CopyBackend):
             entries = self.conn.listdir_attr(directory)
         except IOError:
             return
+        except FAILURES as error:
+            # A half-walked library reads as missing everything it did not reach.
+            raise BackendError(f"Lost the connection while listing {directory}: "
+                               f"{error}") from error
         for entry in entries:
             path = posixpath.join(directory, entry.filename)
             if stat_module.S_ISDIR(entry.st_mode):
@@ -181,10 +199,14 @@ class SftpCopy(CopyBackend):
         source = posixpath.join(self.root, from_relpath)
         target = posixpath.join(self.root, to_relpath)
         self._makedirs(posixpath.dirname(target))
-        self._delete_quietly(target)
+        # Deleting what is there first destroyed a file the plan wanted kept. Refuse,
+        # the way the SMB and local backends do.
         try:
+            if self._size(target) is not None:
+                raise BackendError(f"{to_relpath} is already there; {from_relpath} "
+                                   f"was left where it is")
             self.conn.rename(source, target)
-        except (IOError, OSError) as error:
+        except FAILURES as error:
             raise BackendError(f"Could not rename {from_relpath}: {error}") from error
 
     def delete(self, relpath):
@@ -193,7 +215,7 @@ class SftpCopy(CopyBackend):
     def _delete_quietly(self, remote):
         try:
             self.conn.remove(remote)
-        except IOError:
+        except FAILURES:
             pass
 
     def write_text(self, relpath, text):
@@ -205,7 +227,7 @@ class SftpCopy(CopyBackend):
                 handle.write(text)
             self._delete_quietly(remote)
             self.conn.rename(partial, remote)
-        except (IOError, OSError) as error:
+        except FAILURES as error:
             self._delete_quietly(partial)
             raise BackendError(f"Could not write {relpath}: {error}") from error
         return remote

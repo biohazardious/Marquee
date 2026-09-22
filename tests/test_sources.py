@@ -555,3 +555,26 @@ class TestAStaleFileIsNotAMatch:
         # "0.9" sorts after "0.289" as a string and is not a newer MAME.
         assert not MameSources.same_version("0.9", "0.289")
         assert not MameSources.same_version(None, "0.289")
+
+
+class TestTwoOlderDiskSets:
+    """CHD sets trail the ROM sets: "0.287 CHDs" and "0.288 CHDs" beside a 0.289
+    plan. A disk set measures 1 or 0, so the choice fell to directory order."""
+
+    def make(self, root, name):
+        disk = root / name / "area51"
+        disk.mkdir(parents=True)
+        (disk / "area51.chd").write_bytes(b"MComprHD")
+
+    @pytest.mark.parametrize("order", [("0.287", "0.288"), ("0.288", "0.287")])
+    def test_the_newest_not_past_the_plan_wins(self, tmp_path, order):
+        for version in order:
+            self.make(tmp_path, f"MAME {version} CHDs (merged)")
+        chosen = MameSources.locate_set(str(tmp_path), "chds", version="0.289")
+        assert chosen.endswith("MAME 0.288 CHDs (merged)")
+
+    def test_an_older_one_beats_a_newer_one(self, tmp_path):
+        self.make(tmp_path, "MAME 0.290 CHDs (merged)")
+        self.make(tmp_path, "MAME 0.286 CHDs (merged)")
+        chosen = MameSources.locate_set(str(tmp_path), "chds", version="0.289")
+        assert chosen.endswith("MAME 0.286 CHDs (merged)")

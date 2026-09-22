@@ -404,7 +404,9 @@ function onState(data) {
     // The selection follows the file as long as nothing unsaved is on screen. "Put
     // back" on Left out writes to the file; without this the page kept the old
     // list and the next Build plan excluded the games again.
-    if (!settingsAdopted || !selection.dirty()) selection.seed(lists);
+    if (!settingsAdopted || !selection.dirty() || selection.matches(lists)) {
+      selection.seed(lists);
+    }
     if (!settingsAdopted) {
       settingsAdopted = true;
       if (page === 'settings') settings.render();
@@ -675,7 +677,12 @@ function dirty() {
   const same = (a, b) => JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort());
   const path = (key) => form[key] === undefined || built[key] === (form[key] || '');
   const list = (key) => form[key] === undefined || same(built[key], form[key]);
+  const flag = (key) => form[key] === undefined || Boolean(built[key]) === Boolean(form[key]);
+  // Everything that shapes the plan. Parents-only, the adult folder and the release
+  // used to be left out, so changing one never said the plan was out of date.
   return !(path('rom_dir') && path('chd_dir') && path('copy_path')
+    && path('mature_rom_folder') && path('mame_version')
+    && flag('allow_mature') && flag('parents_only')
     && list('blacklist_genres') && list('blacklist_categories')
     && list('blacklist_roms'));
 }
@@ -794,8 +801,9 @@ let begun = false;
 
 function begin() {
   // Once. Unlocking again after the key changed mid-session used to start a second
-  // poll loop and a second queue timer beside the first.
-  if (begun) return;
+  // poll loop and a second queue timer beside the first -- but the state poll ends
+  // on a 401, so it is restarted (startPolling ignores a loop already running).
+  if (begun) { api.startPolling(unlock); return; }
   begun = true;
   api.startPolling(unlock);
   const start = route();

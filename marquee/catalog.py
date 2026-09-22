@@ -166,7 +166,11 @@ def _entry(record):
         'signature': record.get("sig", "")}
     if disks:
         machine['chd_folder'] = chd_destination(record)
-        machine['chd_disks'] = [disk for disk, _merge in disks]
+        # A merged disk is the parent's file, under the parent's name for it: eight
+        # machines in 0.289 name theirs differently (konam80a's 826aaa01 is
+        # konam80s/826eaa01.chd), and looking for their own name read them as
+        # missing for ever. MAME finds it in the parent's folder by its hash.
+        machine['chd_disks'] = [merge or disk for disk, merge in disks]
         machine['parent'] = record["c"]
     return machine
 
@@ -254,6 +258,10 @@ def collapse_clones(mame_list, reporter=None):
     return mame_list
 
 
+_UNSAFE = re.compile(r'[<>:"\\|?*]')
+_UNSAFE_SPACES = re.compile(r"\s{2,}")
+
+
 def folder_name(category, mature_folder="ZZ-Adult"):
     """(destination folder, is_mature) for a catlist category."""
     is_mature = sources.MATURE_MARKER in category
@@ -264,7 +272,12 @@ def folder_name(category, mature_folder="ZZ-Adult"):
     # the mature branch follows the same rule instead of keeping them. Splitting on the
     # spaced separator keeps a genre like "Videocassette Player/Recorder" whole; the
     # slash inside it cannot survive as a path separator, so it becomes a dash.
-    parts = [part.strip().replace(".", "").replace("/", "-").strip()
+    #
+    # Characters Windows and SMB refuse in a name go too: catlist writes the TTL
+    # machines under "TTL * Ball & Paddle", and '*' is a wildcard to SMB -- a share on
+    # the console would not take the folder at all.
+    parts = [_UNSAFE_SPACES.sub(" ", _UNSAFE.sub("", part)).replace(".", "")
+             .replace("/", "-").strip()
              for part in category.split(sources.CATEGORY_SEPARATOR)]
     parts = [part for part in parts if part]
     if is_mature:

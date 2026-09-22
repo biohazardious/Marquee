@@ -24,6 +24,22 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 LOOPBACK = ("127.0.0.1", "::1", "localhost")
 
 
+def _host_name(header):
+    """The name in a Host header, without its port: 'localhost', '::1', ..."""
+    host = (header or "").strip().lower()
+    if host.startswith("["):
+        return host[1:].split("]", 1)[0]
+    return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+
+
+def _allowed_hosts():
+    """Names a keyless server answers to. A reverse proxy in front of a loopback
+    server that keeps its own Host header adds it with MARQUEE_ALLOWED_HOSTS."""
+    extra = os.environ.get("MARQUEE_ALLOWED_HOSTS", "")
+    return set(LOOPBACK) | {name.strip().lower() for name in extra.split(",")
+                            if name.strip()}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "marquee"
     app = None
@@ -35,9 +51,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def _authorised(self, query):
         if not self.app.token:
-            return True
+            # No key on localhost -- so the Host header is what stands between the
+            # API and DNS rebinding: a page on evil.example re-pointed at 127.0.0.1 is
+            # same-origin, and could read the settings and start a transfer.
+            return _host_name(self.headers.get("Host")) in _allowed_hosts()
         given = self.headers.get("X-Token") or (query.get("token") or [None])[0]
         return bool(given) and hmac.compare_digest(str(given), str(self.app.token))
+
+    def _refuse(self):
+        if self.app.token:
+            self._send_json({"error": "Bad or missing key."}, 401)
+        else:
+            # Not a key problem, and a 401 would have the page ask for one.
+            self._send_json({"error": "This server only answers to localhost. Add "
+                                      "the name to MARQUEE_ALLOWED_HOSTS to reach it "
+                                      "through another."}, 403)
 
     def _send_json(self, payload, status=200):
         body = json.dumps(payload).encode("utf-8")
@@ -170,9 +198,14 @@ class Handler(BaseHTTPRequestHandler):
             # localhost, that page could otherwise start a transfer or a download.
             raise MarqueeError("Expected application/json.")
         try:
-            return json.loads(self.rfile.read(length).decode("utf-8"))
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
         except ValueError as error:
             raise MarqueeError(f"Bad request body: {error}") from error
+        # Every handler reads the body as an object; `[]` or `null` used to reach
+        # them and come back as a 500 with a Python traceback in it.
+        if not isinstance(body, dict):
+            raise MarqueeError("Expected a JSON object.")
+        return body
 
     # -- routes ------------------------------------------------------------- #
 
@@ -201,7 +234,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if not self._authorised(query):
-            self._send_json({"error": "Bad or missing key."}, 401)
+            self._refuse()
             return
 
         try:
@@ -210,7 +243,8 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self.app.job.snapshot(after, self.app.release_sizes())
                 payload["config"] = self.app.config_payload()
                 payload["survey"] = {"running": self.app.survey["running"],
-                                     "data": self.app.survey["data"]}
+                                     "data": self.app.survey["data"],
+                                     "error": self.app.survey.get("error")}
                 payload["versions"] = self.app.versions
                 payload["release_watch"] = self.app.release_watch()
                 payload["destination"] = self.app.destination_payload()
@@ -313,7 +347,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         if not self._authorised(parse_qs(parsed.query)):
-            self._send_json({"error": "Bad or missing key."}, 401)
+            self._refuse()
             return
 
         routes = {"/api/save": self.app.save, "/api/plan": self.app.plan,

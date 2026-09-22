@@ -73,6 +73,10 @@ class PlannedItem:
     # has looked; see marquee.verify.
     state: str = ""
     state_detail: list = field(default_factory=list)
+    # The zip's own verdict. `state` is the machine's -- a damaged disk makes it
+    # `damaged` -- and deciding the zip's fate on that replaced a healthy zip every
+    # time one of its disks was bad.
+    rom_state: str = ""
     # Left out by a genre, category or name on the exclude list. Not wanted, but
     # still listable: the selection tree has to be able to show what is inside a
     # category before anyone can decide to put it back.

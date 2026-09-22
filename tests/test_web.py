@@ -2079,3 +2079,253 @@ class TestWhatTheClientIsStillFetching:
         post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
         wait_for(app.job, "planned", "error")
         assert app.job.state == "planned", app.job.error
+
+
+class TestLibraryCredentials:
+    """A library on a share carries its password inside the URL. It went out on
+    every poll of /api/state, in `built_from`, and in "could not reach" errors."""
+
+    SECRET = "s3cr@t"
+    URL = f"smb://bob:{SECRET}@nas/Share/roms"
+
+    @pytest.fixture
+    def shared(self, server, config):
+        base, app = server
+        config.copy_path = self.URL
+        configuration.write_settings_file(config.settings_path, config)
+        return base, app
+
+    def raw(self, base, path):
+        with urllib.request.urlopen(base + path, timeout=10) as response:
+            return response.read().decode()
+
+    def test_the_state_never_carries_the_password(self, shared):
+        base, _app = shared
+        body = self.raw(base, "/api/state")
+        assert self.SECRET not in body
+        assert json.loads(body)["config"]["copy_path"] == \
+            "smb://bob:••••••••@nas/Share/roms"
+
+    def test_the_mask_coming_back_keeps_the_saved_password(self, shared):
+        base, app = shared
+        masked = get(base, "/api/state")["config"]["copy_path"]
+        post(base, "/api/save", {"copy_path": masked.replace("/roms", "/mame")})
+        assert app.current_config().copy_path == f"smb://bob:{self.SECRET}@nas/Share/mame"
+
+    def test_the_mask_is_never_sent_to_a_different_server(self, shared):
+        base, app = shared
+        masked = get(base, "/api/state")["config"]["copy_path"]
+        with pytest.raises(urllib.error.HTTPError) as error:
+            post(base, "/api/save", {"copy_path": masked.replace("@nas/", "@evil/")})
+        assert error.value.code == 400
+        assert app.current_config().copy_path == self.URL
+
+    def test_a_new_password_is_taken_as_typed(self, shared):
+        base, app = shared
+        post(base, "/api/save", {"copy_path": "smb://bob:other@nas/Share/roms"})
+        assert app.current_config().copy_path == "smb://bob:other@nas/Share/roms"
+
+    def test_a_failed_test_does_not_repeat_the_password(self, shared):
+        base, _app = shared
+        with pytest.raises(urllib.error.HTTPError) as error:
+            post(base, "/api/destination/test",
+                 {"copy_path": f"ftp://bob:{self.SECRET}@127.0.0.1:1/roms"})
+        assert self.SECRET not in error.value.read().decode()
+
+
+class TestRedact:
+    def test_every_scheme_is_hidden(self):
+        from marquee.backends import MASK, redact
+        for url in ("smb://u:p@h/s", "ftp://u:p@h/r", "ftps://u:p@h:990/r",
+                    "sftp://u:p@h/r"):
+            assert "p@" not in redact(url).replace(MASK, "")
+            assert redact(url).startswith(url.split("u:")[0] + "u:" + MASK + "@")
+
+    def test_nothing_to_hide_is_left_alone(self):
+        from marquee.backends import redact
+        for url in ("smb://h/s", "sftp://u@h/r", "/library", "", None):
+            assert redact(url) == url
+
+    def test_an_at_sign_in_the_password_stays_hidden(self):
+        from marquee.backends import redact
+        assert "cret" not in redact("smb://u:se@cret@h/s")
+
+
+class TestDnsRebinding:
+    """With no key on localhost, the Host header is the only thing telling a request
+    from this machine apart from a page on evil.example re-pointed at 127.0.0.1."""
+
+    def request(self, base, method, path, host, body=None):
+        import http.client
+        port = int(base.rsplit(":", 1)[1])
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        headers = {"Host": host, "Content-Type": "application/json"}
+        conn.request(method, path, body=json.dumps(body) if body is not None else None,
+                     headers=headers)
+        response = conn.getresponse()
+        status, text = response.status, response.read().decode()
+        conn.close()
+        return status, text
+
+    def test_a_foreign_host_is_refused(self, server):
+        base, _app = server
+        assert self.request(base, "GET", "/api/state", "evil.example")[0] == 403
+        status, _text = self.request(base, "POST", "/api/save", "evil.example:8777",
+                                     {"copy_path": "/tmp/elsewhere"})
+        assert status == 403
+
+    def test_localhost_by_any_of_its_names_is_served(self, server):
+        base, _app = server
+        port = base.rsplit(":", 1)[1]
+        for host in (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}",
+                     "localhost"):
+            assert self.request(base, "GET", "/api/state", host)[0] == 200, host
+
+    def test_a_name_can_be_allowed_for_a_proxy(self, server, monkeypatch):
+        base, _app = server
+        monkeypatch.setenv("MARQUEE_ALLOWED_HOSTS", "marquee.lan, other")
+        assert self.request(base, "GET", "/api/state", "marquee.lan")[0] == 200
+
+    def test_the_shell_still_loads(self, server):
+        base, _app = server
+        assert self.request(base, "GET", "/api/health", "evil.example")[0] == 200
+
+    def test_with_a_key_the_key_decides(self, server):
+        base, app = server
+        app.token = "k"
+        status, _text = self.request(base, "GET", "/api/state?token=k", "marquee.lan")
+        assert status == 200
+
+
+class TestTheSavedClientPasswordStaysWithTheSavedClient:
+    """The Test button sends the form's address with the password masked. Paired
+    with the saved password, any address a request named got it."""
+
+    @pytest.fixture
+    def app(self, server, config):
+        _base, app = server
+        config.download_client = "http://nas:8080/"
+        config.download_username = "admin"
+        config.download_password = "hunter2"
+        configuration.write_settings_file(config.settings_path, config)
+        return app
+
+    def built(self, app, monkeypatch, overrides):
+        seen = {}
+        monkeypatch.setattr("marquee.download.for_url",
+                            lambda url, username=None, password=None:
+                            seen.update(url=url, username=username, password=password))
+        app.client(overrides)
+        return seen
+
+    def test_the_saved_client_gets_the_saved_password(self, app, monkeypatch):
+        seen = self.built(app, monkeypatch, {"download_client": "http://nas:8080",
+                                             "download_password": "•" * 8})
+        assert seen["password"] == "hunter2"
+
+    def test_another_address_does_not(self, app, monkeypatch):
+        seen = self.built(app, monkeypatch, {"download_client": "http://evil:8080/",
+                                             "download_password": "•" * 8})
+        assert seen["password"] is None
+
+    def test_another_user_does_not(self, app, monkeypatch):
+        seen = self.built(app, monkeypatch, {"download_username": "guest"})
+        assert seen["password"] is None
+
+    def test_a_typed_password_is_used_anywhere(self, app, monkeypatch):
+        seen = self.built(app, monkeypatch, {"download_client": "http://new:8080/",
+                                             "download_password": "typed"})
+        assert seen["password"] == "typed"
+
+
+class TestAPlanTheSettingsHaveMovedOn:
+    """The transfer runs the configuration the plan was built with. Settings saved
+    since, that would have shaped the plan, made it the wrong plan -- and the ones
+    that only decide how files are written were silently ignored."""
+
+    @pytest.fixture
+    def planned(self, server, xml_path, catlist_path):
+        base, app = server
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        time.sleep(0.02)
+        return base, app
+
+    def test_a_genre_left_out_since_refuses_the_transfer(self, planned):
+        base, app = planned
+        genre = app.job.plan.items[0].genre
+        post(base, "/api/save", {"blacklist_genres": [genre]})
+        with pytest.raises(urllib.error.HTTPError) as error:
+            post(base, "/api/copy", {})
+        assert error.value.code == 400
+        assert b"Build the plan again" in error.value.read()
+        assert app.job.state == "planned"
+
+    def test_parents_only_counts_as_moving_on(self, planned):
+        base, _app = planned
+        post(base, "/api/save", {"parents_only": True})
+        with pytest.raises(urllib.error.HTTPError):
+            post(base, "/api/copy", {})
+
+    def test_a_hardlink_ticked_since_is_used(self, planned):
+        base, app = planned
+        post(base, "/api/save", {"hardlink": True, "write_gamelist": False})
+        post(base, "/api/copy", {})
+        wait_for(app.job, "done", "error")
+        assert app.job.config.hardlink is True
+        assert app.job.config.write_gamelist is False
+
+    def test_nothing_saved_since_runs_as_planned(self, planned):
+        base, app = planned
+        post(base, "/api/copy", {})
+        assert wait_for(app.job, "done", "error") == "done"
+
+
+class TestABodyOfTheWrongShape:
+    """Valid JSON, wrong shape: each used to be a 500 with a traceback."""
+
+    @pytest.mark.parametrize("path,payload", [
+        ("/api/save", []), ("/api/save", None), ("/api/import", []),
+        ("/api/plan", {"rom_dir": 5}), ("/api/save", {"download_password": 5}),
+    ])
+    def test_it_is_a_400_that_says_why(self, server, path, payload):
+        base, _app = server
+        with pytest.raises(urllib.error.HTTPError) as error:
+            post(base, path, payload)
+        assert error.value.code == 400
+        assert "Traceback" not in error.value.read().decode()
+
+
+class TestBackgroundTasksStartOnce:
+    """Each task checked "running" and set it in two steps; two requests close
+    together both started one."""
+
+    def test_a_task_is_claimed_once_however_many_ask(self, server):
+        _base, app = server
+        task = {"running": False}
+        results = []
+        barrier = threading.Barrier(8)
+
+        def ask():
+            barrier.wait()
+            results.append(app._claim(task))
+        threads = [threading.Thread(target=ask) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert results.count(True) == 1
+
+    def test_a_survey_that_fails_says_so(self, server, monkeypatch):
+        base, app = server
+
+        def broken(_paths):
+            raise PermissionError("no entry")
+        monkeypatch.setattr("marquee.sync.survey", broken)
+        post(base, "/api/survey", {})
+        for _ in range(200):
+            if not app.survey["running"]:
+                break
+            time.sleep(0.02)
+        assert "no entry" in (app.survey["error"] or "")
+        assert get(base, "/api/state")["survey"]["error"]

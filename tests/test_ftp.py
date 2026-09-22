@@ -9,6 +9,7 @@ import pytest
 
 from marquee.backends import for_destination
 from marquee.backends.ftp import FtpCopy
+from marquee.backends import BackendError
 from marquee.errors import ConfigError
 
 pyftpdlib = pytest.importorskip("pyftpdlib")
@@ -150,12 +151,28 @@ class TestRearrange:
         assert not (root / "roms" / "Maze" / "galaga.zip").exists()
         assert (root / "roms" / "Shooter" / "galaga.zip").exists()
 
-    def test_moving_onto_an_existing_file_replaces_it(self, backend, rom):
+    def test_moving_onto_an_existing_file_is_refused(self, backend, rom, tmp_path):
+        # The file already there may be the one the plan keeps; deleting it first
+        # used to destroy it. SMB and local refuse; so does FTP.
         handle, root = backend
         handle.copy(rom, "Maze")
-        handle.copy(rom, "Shooter")
-        handle.move("Maze/galaga.zip", "Shooter/galaga.zip")
-        assert (root / "roms" / "Shooter" / "galaga.zip").exists()
+        kept = tmp_path / "keep" / "galaga.zip"
+        kept.parent.mkdir()
+        kept.write_bytes(b"kept")
+        handle.copy(str(kept), "Shooter")
+        with pytest.raises(BackendError, match="already there"):
+            handle.move("Maze/galaga.zip", "Shooter/galaga.zip")
+        assert (root / "roms" / "Shooter" / "galaga.zip").read_bytes() == b"kept"
+        assert (root / "roms" / "Maze" / "galaga.zip").exists()
+
+    def test_a_small_file_can_be_read_whole(self, backend):
+        handle, _root = backend
+        handle.write_text("gamelist.xml", "<gameList/>")
+        assert handle.read_file("gamelist.xml") == b"<gameList/>"
+
+    def test_reading_a_file_that_is_not_there_is_none(self, backend):
+        handle, _root = backend
+        assert handle.read_file("gamelist.xml") is None
 
     def test_delete_removes_the_file(self, backend, rom):
         handle, root = backend
@@ -226,3 +243,50 @@ class TestAFreshSession:
         finally:
             handle.close()
         assert int(target.stat().st_mtime) == 1_000_000_000, "it was uploaded again"
+
+
+class TestAServerWithoutMlsd:
+    """vsftpd and others answer MLSD with a 500. The NLST fallback never went below
+    the top level, and a library in genre folders indexed as empty -- every game
+    planned as new, nothing ever found to be an orphan."""
+
+    @pytest.fixture
+    def plain(self, tmp_path):
+        from pyftpdlib.authorizers import DummyAuthorizer
+        from pyftpdlib.handlers import FTPHandler
+        from pyftpdlib.servers import FTPServer
+
+        root = tmp_path / "srv"
+        (root / "roms" / "Maze" / "Misc").mkdir(parents=True)
+        (root / "roms" / "Shooter").mkdir()
+        (root / "roms" / "images").mkdir()
+        (root / "roms" / "Maze" / "Misc" / "pacman.zip").write_bytes(b"p" * 7)
+        (root / "roms" / "Shooter" / "galaga.zip").write_bytes(b"g" * 5)
+        (root / "roms" / "images" / "galaga.png").write_bytes(b"png")
+        (root / "roms" / "gamelist.xml").write_text("<gameList/>")
+        authorizer = DummyAuthorizer()
+        authorizer.add_user("bio", "pw", str(root), perm="elradfmwMT")
+
+        class NoMlsd(FTPHandler):
+            proto_cmds = {name: spec for name, spec in FTPHandler.proto_cmds.items()
+                          if name != "MLSD"}
+        NoMlsd.authorizer = authorizer
+        server = FTPServer(("127.0.0.1", 0), NoMlsd)
+        thread = threading.Thread(target=server.serve_forever, kwargs={"timeout": 0.1},
+                                  daemon=True)
+        thread.start()
+        handle = FtpCopy(f"ftp://bio:pw@127.0.0.1:{server.socket.getsockname()[1]}/roms")
+        yield handle
+        handle.close()
+        server.close_all()
+
+    def test_every_folder_is_walked(self, plain):
+        assert plain.index() == {"Maze/Misc/pacman.zip": 7, "Shooter/galaga.zip": 5}
+
+    def test_a_listing_does_not_leave_sizes_unreadable(self, plain, tmp_path):
+        """ftplib switches to ASCII for every listing, where SIZE is refused: a move's
+        check was followed by re-uploading a file already there at the same size."""
+        plain.move("Shooter/galaga.zip", "Maze/galaga.zip")
+        source = tmp_path / "galaga.zip"
+        source.write_bytes(b"g" * 5)
+        assert plain._put(str(source), "/roms/Maze/galaga.zip") is False

@@ -18,7 +18,7 @@ from .. import __version__
 from .. import config as configuration
 from ..errors import MarqueeError
 from ..plan import human_bytes
-from .job import Job, filtered, missing_rows
+from .job import Job, built_from, filtered, missing_rows
 
 
 class Application:
@@ -34,7 +34,7 @@ class Application:
         self.job = Job()
         # A cold walk of 47,000 files takes about ten seconds, so it runs in the
         # background and the page picks it up when it lands.
-        self.survey = {"running": False, "for": None, "data": None}
+        self.survey = {"running": False, "for": None, "data": None, "error": None}
         self.versions = {"running": False, "data": None, "error": None}
         # The Pleasuredome index changes about once a month, so it is fetched on
         # demand and then remembered rather than polled.
@@ -54,6 +54,10 @@ class Application:
         # Read-modify-write of settings.ini happens from three pages; two saves that
         # overlap used to have the second silently drop the first one's fields.
         self._settings_lock = threading.Lock()
+        # Guards the "running" flag of every background task below. Each checked it
+        # and set it as two steps, so two requests close together -- a double click,
+        # or every open tab's poll asking for the release listing -- both started one.
+        self._task_lock = threading.Lock()
         self._config_cache = {"stamp": None, "config": None}
         self._torrent_sizes = {"at": 0.0, "data": {}}
         # The status bar on every page asks for the queue; one answer serves all of
@@ -72,7 +76,10 @@ class Application:
         """
         try:
             stat = os.stat(self.settings_path)
-            stamp = (stat.st_mtime_ns, stat.st_size)
+            # The inode too: every save is an atomic replace, and on a filesystem
+            # with coarse timestamps two same-size saves inside a second kept the
+            # first one's settings.
+            stamp = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
         except OSError:
             stamp = None
         cache = self._config_cache
@@ -126,13 +133,16 @@ class Application:
         url = values.get("download_client") or config.download_client
         if not url:
             raise MarqueeError("No download client is configured.")
+        username = values.get("download_username") or config.download_username
         password = values.get("download_password")
         if not password or set(password) == {"\u2022"}:
-            password = config.download_password
-        return download.for_url(
-            url,
-            username=values.get("download_username") or config.download_username,
-            password=password)
+            # The saved password only ever goes to the saved client as the saved
+            # user. Paired with any address a request names, it would be sent to
+            # whoever answers there.
+            same = ((url or "").rstrip("/") == (config.download_client or "").rstrip("/")
+                    and (username or "") == (config.download_username or ""))
+            password = config.download_password if same else None
+        return download.for_url(url, username=username, password=password)
 
     def test_client(self, body):
         """Reach the client, and say where its downloads land -- in its own terms and
@@ -233,8 +243,9 @@ class Application:
         literally named "smb:" instead of saying so. This is the answer for a remote
         library: connect, list, say what is there.
         """
-        copy_path = ((body or {}).get("copy_path") or self.current_config().copy_path
-                     or "").strip()
+        saved = self.current_config().copy_path
+        copy_path = backends.unmask(((body or {}).get("copy_path") or saved
+                                     or "").strip(), saved)
         if not copy_path:
             raise MarqueeError("No library path to test.")
         remote = backends.is_remote(copy_path)
@@ -243,9 +254,10 @@ class Application:
             backend = backends.for_destination(copy_path)
             names = backend.probe()
         except (MarqueeError, OSError, ValueError, ConnectionError) as error:
-            raise MarqueeError(f"Could not reach {copy_path}: {error}") from error
+            raise MarqueeError(f"Could not reach {backends.redact(copy_path)}: "
+                               f"{error}") from error
         except Exception as error:  # noqa: BLE001 - pysmb/paramiko raise their own
-            raise MarqueeError(f"Could not reach {copy_path}: "
+            raise MarqueeError(f"Could not reach {backends.redact(copy_path)}: "
                                f"{type(error).__name__}: {error}") from error
         finally:
             if backend is not None:
@@ -283,6 +295,15 @@ class Application:
             },
         }
 
+    def _claim(self, task, **fields):
+        """Mark `task` running if it is not already; False when it was."""
+        with self._task_lock:
+            if task.get("running"):
+                return False
+            task.update(fields)
+            task["running"] = True
+            return True
+
     def _watch_updates(self):
         if os.environ.get("MARQUEE_NO_UPDATE_CHECK", "").strip().lower() in ("1", "true", "yes"):
             return
@@ -308,8 +329,8 @@ class Application:
                 self.update["checked_at"] = time.time()
                 self.update["running"] = False
 
-        self.update["running"] = True
-        threading.Thread(target=work, daemon=True).start()
+        if self._claim(self.update):
+            threading.Thread(target=work, daemon=True).start()
 
     def refresh_releases(self, _body=None):
         def work():
@@ -327,8 +348,7 @@ class Application:
                 self.releases["fetched_at"] = time.time()
                 self.releases["running"] = False
 
-        if not self.releases["running"]:
-            self.releases["running"] = True
+        if self._claim(self.releases):
             threading.Thread(target=work, daemon=True).start()
         return {"started": True}
 
@@ -384,10 +404,16 @@ class Application:
         the two do not share a filesystem. What comes back instead is `content_path`,
         which says where the files really are.
 
-        Returns (infohash, files, added_now, ours). A torrent is ours when it sits
-        in this tool's category -- this call filed it there, or an earlier one did.
+        Returns (infohash, files, fresh, ours). A torrent is ours when it sits in
+        this tool's category -- this call filed it there, or an earlier one did.
         Anything else in the client is the user's own download, possibly of the
         whole set, and may only ever have files added to it.
+
+        `fresh` means ours and still as qBittorrent added it: every file selected,
+        not a byte fetched. That is what must never be left behind, and "this call
+        added it" was not enough to catch it -- a metadata wait that timed out, or a
+        crash between add and narrow, left the whole set selected for the next call
+        to find and, having not added it, leave alone.
         """
         infohash = release.infohash
         entry = client.one(infohash)
@@ -397,13 +423,24 @@ class Application:
             infohash = client.add(release.magnet_uri(),
                                   category=acquisition.CATEGORY,
                                   tags=[release.kind, release.version], stopped=True)
-            client.wait_for_metadata(infohash)
+            try:
+                client.wait_for_metadata(infohash)
+            except MarqueeError:
+                # Nothing has been fetched and nothing can be narrowed yet; when the
+                # metadata does arrive it would sit there with all 1.3 TB selected.
+                # It was added a moment ago, by this call, so it goes again.
+                try:
+                    client.delete(infohash, delete_files=False)
+                except MarqueeError:
+                    pass
+                raise
         ours = added or (entry or {}).get("category") == acquisition.CATEGORY
         files = client.files(infohash)
         if not files:
             raise MarqueeError(
                 f"{release.name}: the download client has no file list for it yet.")
-        return infohash, files, added, ours
+        fresh = added or (ours and _untouched(files))
+        return infohash, files, fresh, ours
 
     @staticmethod
     def _disarm(client, infohash, files):
@@ -467,8 +504,8 @@ class Application:
             try:
                 client = self.client()
                 release = self._rom_release()
-                infohash, files, added, _ours = self._ensure_release(release, client)
-                if added:
+                infohash, files, fresh, _ours = self._ensure_release(release, client)
+                if fresh:
                     self._disarm(client, infohash, files)
                 roms = {}
                 for entry in files:
@@ -482,8 +519,9 @@ class Application:
                 except MarqueeError:
                     chd = None
                 if chd is not None:
-                    chd_hash, chd_files, chd_added = self._ensure_release(chd, client)
-                    if chd_added:
+                    chd_hash, chd_files, chd_fresh, _ours = self._ensure_release(
+                        chd, client)
+                    if chd_fresh:
                         self._disarm(client, chd_hash, chd_files)
                     for entry in chd_files:
                         parts = entry["path"].split("/")
@@ -498,11 +536,14 @@ class Application:
                 self._write_catalogue()
             except MarqueeError as error:
                 self.catalogue["error"] = str(error)
+            except Exception as error:  # noqa: BLE001 - a thread that dies silently
+                # left the page showing no prices and no reason.
+                self.catalogue["error"] = f"Reading the release failed: {error}"
             finally:
                 self.catalogue["running"] = False
 
-        self.catalogue["running"] = True
-        self.catalogue["error"] = None
+        if not self._claim(self.catalogue, error=None):
+            raise MarqueeError("Already reading the release.")
         threading.Thread(target=work, daemon=True).start()
         return {"started": True}
 
@@ -656,7 +697,8 @@ class Application:
             finally:
                 self.upgrade["running"] = False
 
-        self.upgrade.update(running=True, data=None, error=None, to=target)
+        if not self._claim(self.upgrade, data=None, error=None, to=target):
+            raise MarqueeError("Already working that out.")
         threading.Thread(target=work, daemon=True).start()
         return {"started": True, "from": current, "to": target}
 
@@ -860,7 +902,7 @@ class Application:
 
     def _one_part(self, release, client, dry_run, select):
         """Price, and optionally commit, one release's share of a download."""
-        infohash, files, added, ours = self._ensure_release(release, client)
+        infohash, files, fresh, ours = self._ensure_release(release, client)
         piece = None
         try:
             piece = (client.properties(infohash) or {}).get("piece_size") or None
@@ -875,7 +917,7 @@ class Application:
                 "missing_count": len(chosen.missing),
                 "path": self._content_path(client, infohash),
                 "client_path": self._client_path(client, infohash),
-                "added_now": added}
+                "added_now": fresh}
         # Whether this process can see the place the client is writing into. The
         # torrent's own folder does not exist until the download starts, so the test is
         # the folder above it; when even that is not there, the download will finish
@@ -887,6 +929,11 @@ class Application:
             part["error"] = (f"{release.name} has none of them"
                              + (f" ({len(chosen.missing)} not in the set)"
                                 if chosen.missing else ""))
+            # Nothing to select is routine -- the wanted disks are not in this CHD
+            # set yet -- but a set added just to find that out still arrives with
+            # everything selected.
+            if fresh:
+                self._disarm(client, infohash, files)
             return part
 
         # The selection is applied even on a dry run, but only to a torrent this call
@@ -901,7 +948,7 @@ class Application:
         # half they have not got yet is not this tool's call to make. `added` alone
         # was the wrong test, because pricing on one call made the next one think the
         # torrent was somebody else's.
-        if dry_run and not added:
+        if dry_run and not fresh:
             return part
 
         if ours:
@@ -991,8 +1038,12 @@ class Application:
         # Stop only flips the flag; the worker notices a moment later. A start in that
         # moment used to pass the guard, and the old worker's exit then switched the
         # new one off. Each run has a generation and only reads and writes its own.
-        generation = self.art.get("generation", 0) + 1
-        self.art["generation"] = generation
+        with self._task_lock:
+            if self.art["running"]:
+                raise MarqueeError("Artwork is already downloading.")
+            generation = self.art.get("generation", 0) + 1
+            self.art.update(generation=generation, running=True, kind=kind, done=0,
+                            total=len(descriptions), summary=None, error=None)
 
         def mine():
             return self.art["generation"] == generation
@@ -1015,8 +1066,6 @@ class Application:
                     self.art["running"] = False
                     self.art["finished_at"] = time.time()
 
-        self.art.update(running=True, kind=kind, done=0, total=len(descriptions),
-                        summary=None, error=None)
         threading.Thread(target=work, daemon=True).start()
         return {"started": True, "total": len(descriptions), "kind": kind}
 
@@ -1038,7 +1087,8 @@ class Application:
             finally:
                 self.versions["running"] = False
 
-        self.versions["running"] = True
+        if not self._claim(self.versions):
+            return {"started": False}
         threading.Thread(target=work, daemon=True).start()
         return {"started": True}
 
@@ -1055,7 +1105,8 @@ class Application:
         return {
             "rom_dir": config.rom_dir or "",
             "chd_dir": config.chd_dir or "",
-            "copy_path": config.copy_path or "",
+            # A share's password rides inside the URL; hidden like the client's.
+            "copy_path": backends.redact(config.copy_path or ""),
             "allow_mature": config.allow_mature,
             "parents_only": config.parents_only,
             "write_gamelist": config.write_gamelist,
@@ -1087,9 +1138,20 @@ class Application:
                     "download_username", "download_dir", "remote_path_mappings",
                     "mature_rom_folder"):
             if key in body:
-                overrides[key] = (body[key] or "").strip()
+                value = body[key]
+                if value is not None and not isinstance(value, str):
+                    raise MarqueeError(f"{key} should be text.")
+                overrides[key] = (value or "").strip()
+        # A share's password is masked on the way out too; the mask coming back onto
+        # the same server means the saved one.
+        if overrides.get("copy_path"):
+            overrides["copy_path"] = backends.unmask(overrides["copy_path"],
+                                                     self.current_config().copy_path)
         # The password is masked on the way out, so the mask coming back means
         # "unchanged" rather than "set it to a row of dots".
+        if "download_password" in body and not isinstance(
+                body["download_password"], (str, type(None))):
+            raise MarqueeError("download_password should be text.")
         if "download_password" in body and set(body["download_password"] or "") != {"\u2022"}:
             overrides["download_password"] = body["download_password"]
         for key in ("allow_mature", "hardlink", "parents_only", "write_gamelist",
@@ -1249,9 +1311,35 @@ class Application:
                              pieces=(lambda: self.disk_pieces(config)) if deep else None)
         return {"started": "check", "deep": deep}
 
+    def _saved_since(self, moment):
+        """Whether settings.ini was written after `moment` (a time.time())."""
+        if moment is None:
+            return False
+        try:
+            return os.stat(self.settings_path).st_mtime > moment
+        except OSError:
+            return False
+
+    # Settings a transfer reads as it goes, rather than ones that shaped the plan.
+    COPY_ONLY = ("hardlink", "write_gamelist", "copy_artwork")
+
     def copy(self, body):
         if self.job.plan is None:
             raise MarqueeError("Build a plan first, so there is something to copy.")
+        planned = self.job.config
+        if planned is not None and not self.job.busy:
+            current = self.current_config()
+            # The plan is run with the configuration it was built from. Settings
+            # saved since then that would have shaped it -- a genre left out, parents
+            # only -- make it the wrong plan, and nothing on the server said so.
+            if self._saved_since(self.job.planned_at) \
+                    and built_from(current) != built_from(planned):
+                raise MarqueeError("The settings were saved after this plan was built. "
+                                   "Build the plan again before transferring.")
+            # These only decide how files are written, and the saved ones are what
+            # the page shows: hardlink ticked and saved used to copy in full anyway.
+            self.job.config = planned.with_overrides(
+                **{key: getattr(current, key) for key in self.COPY_ONLY})
         version = (body.get("mame_version")
                    or getattr(self.job.config, "mame_version", None)
                    or getattr(self.job.resolution, "xml_version", None))
@@ -1277,11 +1365,15 @@ class Application:
                 data = sync.survey(paths)
                 for entry in data.values():
                     entry["bytes_human"] = human_bytes(entry["bytes"])
-                self.survey.update(data=data, **{"for": key})
+                self.survey.update(data=data, error=None, **{"for": key})
+            except Exception as error:  # noqa: BLE001 - it died in the thread with no
+                # word to anyone, and the figures just never appeared.
+                self.survey["error"] = f"{type(error).__name__}: {error}"
             finally:
                 self.survey["running"] = False
 
-        self.survey["running"] = True
+        if not self._claim(self.survey):
+            return {"started": False}
         threading.Thread(target=work, daemon=True).start()
         return {"started": True}
 
@@ -1332,6 +1424,17 @@ class Application:
 
 ALLOWED_FILTERS = ("query", "status", "genre", "category", "mature", "have",
                    "condition", "reason", "state")
+
+
+def _untouched(files):
+    """A torrent as qBittorrent adds one: every file selected, nothing fetched.
+
+    What this tool itself leaves in its category never looks like that -- `narrow()`
+    skips what is not wanted, and anything wanted starts arriving -- so finding one
+    means an earlier call added it and was cut short before narrowing it.
+    """
+    return len(files) > 1 and all(
+        entry.get("priority", 1) > 0 and not entry.get("progress") for entry in files)
 
 
 def _filters(given):

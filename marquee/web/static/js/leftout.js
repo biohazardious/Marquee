@@ -143,6 +143,9 @@ function gameRow(m, depth) {
 
 async function loadCategory(name) {
   if (V.rows[name] || V.loading.has(name)) return;
+  // Every filter change swaps in a new object, so an answer that comes back for an
+  // old one is dropped instead of filling the new view with the old filter's rows.
+  const rows = V.rows;
   V.loading.add(name);
   render();
   try {
@@ -150,7 +153,11 @@ async function loadCategory(name) {
       set: 'left-out', category: name, reason: V.reason, q: V.query,
       condition: V.condition, limit: ROWS, sort: 'size', dir: 'desc',
     });
-    V.rows[name] = found.rows;
+    rows[name] = found.rows;
+  } catch (error) {
+    // Kept, so render() does not ask again: with no rows it used to re-fetch, fail,
+    // and re-fetch, as fast as the server answered, for as long as it was down.
+    rows[name] = { error: error.message };
   } finally {
     V.loading.delete(name);
     render();
@@ -176,6 +183,17 @@ function categoryRows(cat, depth) {
   }
   if (V.loading.has(cat.name)) {
     rows.push(el('div', { class: 'row game dim', text: 'loading…' }));
+    return rows;
+  }
+  const failed = V.rows[cat.name] && V.rows[cat.name].error;
+  if (failed) {
+    const retry = el('a', { href: '#', text: 'Try again' });
+    retry.onclick = (event) => {
+      event.preventDefault();
+      delete V.rows[cat.name];
+      loadCategory(cat.name);
+    };
+    rows.push(el('div', { class: 'row game dim' }, `Could not load: ${failed} — `, retry));
     return rows;
   }
   const games = V.rows[cat.name] || [];

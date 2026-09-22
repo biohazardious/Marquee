@@ -96,7 +96,10 @@ def _known_wrong(item, relpath):
         return False
     if relpath in getattr(item, "damaged_disks", ()):
         return True
-    return item.state in REPLACE_STATES and relpath == f"{item.folder}/{item.name}.zip"
+    # The zip's own verdict: a damaged disk makes the machine `damaged` without saying
+    # anything about the zip beside it.
+    state = getattr(item, "rom_state", None) or item.state
+    return state in REPLACE_STATES and relpath == f"{item.folder}/{item.name}.zip"
 
 
 def _elsewhere(unclaimed, remaining, basename):
@@ -220,6 +223,11 @@ def compare(plan, existing):
     for item in list(getattr(plan, "items", ())) + list(getattr(plan, "absent_items", ())):
         paths = list(item.wanted_paths())
         found = 0
+        # Files the check read and found wrong, with nothing in the source folder to
+        # replace them. They stay where they are -- a stale zip still plays -- but
+        # they are not "here": counting them as settled meant a download never asked
+        # for the right bytes, and "Check the library" found problems nothing fixed.
+        refetch = set()
         for relpath in paths:
             if relpath in claimed:
                 found += relpath in present
@@ -227,9 +235,12 @@ def compare(plan, existing):
             size = remaining.pop(relpath, None)
             if size is not None:
                 # Already exactly where it belongs: nothing to do, which is KEEP.
-                found += 1
                 claimed.add(relpath)
-                present.add(relpath)
+                if _known_wrong(item, relpath):
+                    refetch.add(relpath)
+                else:
+                    found += 1
+                    present.add(relpath)
                 report.actions.append(Action(KEEP, relpath, None, size=size,
                                              machine=item.name))
                 continue
@@ -237,9 +248,12 @@ def compare(plan, existing):
                                    posixpath.basename(relpath))
             if elsewhere is None:
                 continue
-            found += 1
             claimed.add(relpath)
-            present.add(relpath)
+            if _known_wrong(item, relpath) or _known_wrong(item, elsewhere):
+                refetch.add(relpath)
+            else:
+                found += 1
+                present.add(relpath)
             report.actions.append(
                 Action(MOVE, relpath, None, from_relpath=elsewhere,
                        size=remaining.pop(elsewhere), machine=item.name))
@@ -247,7 +261,8 @@ def compare(plan, existing):
         # Settled: every file is either already in the library or on its way from the
         # source folder. What is left over is what a download would have to supply.
         item.compared = True
-        item.unsettled = [relpath for relpath in paths if relpath not in claimed]
+        item.unsettled = [relpath for relpath in paths
+                          if relpath not in claimed or relpath in refetch]
         item.settled = bool(paths) and not item.unsettled
 
     for relpath, size in remaining.items():

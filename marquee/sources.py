@@ -81,6 +81,14 @@ def read_xml_build(path):
     return None
 
 
+def _release_key(version):
+    """0.289 -> (0, 289), so releases order as MAME numbers them: 0.9 before 0.289."""
+    try:
+        return tuple(int(part) for part in str(version).split("."))
+    except ValueError:
+        return ()
+
+
 def same_version(one, other):
     """0.289 and "0.289" and 0.2890 are one release; "0.9" and "0.289" are not.
 
@@ -291,10 +299,19 @@ def locate_set(directory, kind="roms", version=None):
                     continue
                 named = version_in_path(entry.name)
                 if not version or named is None:
-                    rank = 1
+                    rank, nearness = 1, ()
                 else:
                     rank = 2 if same_version(named, version) else 0
-                key = (rank, found)
+                    # Between two other releases, the newest one not past the wanted
+                    # one. The CHD sets trail the ROM sets, so "0.287 CHDs" and "0.288
+                    # CHDs" beside a 0.289 plan was ordinary -- and a disk set counts
+                    # 1 or 0, so the tie fell to whichever the directory listed first.
+                    older = _release_key(named) <= _release_key(version)
+                    nearness = (older, _release_key(named) if older
+                                else tuple(-part for part in _release_key(named)))
+                # After the count: for ROMs the fuller folder still wins, and a disk
+                # set counts 1 or 0, so for disks this is what decides.
+                key = (rank, found, nearness)
                 if best_key is None or key > best_key:
                     best, best_key = entry.path, key
     except OSError:

@@ -5,6 +5,7 @@ import re
 import socket
 
 from smb import smb_structs
+from smb.base import NotConnectedError, SMBTimeout
 from smb.SMBConnection import SMBConnection
 
 from ..reporting import Reporter
@@ -16,6 +17,14 @@ from . import BackendError, CopyBackend, is_managed
 # The userinfo group is greedy so it ends at the last '@' before the path, which
 # keeps an '@' inside the password out of the hostname.
 CONN_STR_RE = re.compile(r'smb://(?:([^/]*)@)?([^/:]+)(?::(\d+))?/(.+)')
+
+
+# A session that dropped or a reply that never came. pysmb raises the first two as
+# plain Exceptions, so nothing that caught OperationFailure saw them: one stalled
+# write -- a NAS disk spinning up -- ended a 300 GB sync.
+_LOST = (NotConnectedError, SMBTimeout, OSError)
+# Anything a call to the share can fail with.
+_FAILED = (smb_structs.OperationFailure, smb_structs.ProtocolError) + _LOST
 
 
 def _brief(error):
@@ -41,6 +50,23 @@ class _Counting:
     def __getattr__(self, name):
         return getattr(self.handle, name)
 
+    def rewind(self, position):
+        """Back to `position` for a retry, taking back what was reported past it."""
+        here = self.handle.tell()
+        self.handle.seek(position)
+        self.on_bytes(position - here)
+
+
+class _Retrying:
+    """The backend's connection, as SmbReadable sees it: every call goes through
+    `RemoteCopy._call`, so a zip read survives a session that dropped."""
+
+    def __init__(self, backend):
+        self.backend = backend
+
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: self.backend._call(name, *args, **kwargs)
+
 
 class SmbReadable:
     """A read-only, seekable view of one file on a share.
@@ -57,6 +83,8 @@ class SmbReadable:
             self.size = conn.getAttributes(share, path).file_size
         except (smb_structs.OperationFailure, smb_structs.ProtocolError) as error:
             raise FileNotFoundError(path) from error
+        except _LOST as error:
+            raise OSError(f"reading {path}: {_brief(error)}") from error
         self.position = 0
 
     def read(self, length=-1):
@@ -69,9 +97,8 @@ class SmbReadable:
         try:
             self.conn.retrieveFileFromOffset(self.share, self.path, buffer,
                                              offset=self.position, max_length=length)
-        except (smb_structs.OperationFailure, smb_structs.ProtocolError,
-                socket.error) as error:
-            raise OSError(f"reading {self.path}: {error}") from error
+        except _FAILED as error:
+            raise OSError(f"reading {self.path}: {_brief(error)}") from error
         data = buffer.getvalue()
         self.position += len(data)
         return data
@@ -153,14 +180,37 @@ class RemoteCopy(CopyBackend):
         # every later call failed with an unrelated error.
         raise ConnectionError(f"Failed to connect to {self.server}: {'; '.join(errors)}")
 
-    def __del__(self):
-        # __init__ can fail before self.conn exists.
-        conn = getattr(self, 'conn', None)
+    def close(self):
+        # The base class's close() is a no-op, and every caller's backend.close()
+        # used to be one too: the session lived until garbage collection.
+        conn, self.conn = getattr(self, 'conn', None), None
         if conn is not None:
             try:
                 conn.close()
             except Exception:
                 pass
+
+    def __del__(self):
+        # __init__ can fail before self.conn exists.
+        self.close()
+
+    def _reconnect(self):
+        self.close()
+        self._open_connection()
+
+    def _call(self, method, *args, **kwargs):
+        """One call to the share, reconnecting once if the session had dropped.
+
+        pysmb has no reconnect of its own; a session that timed out stayed dead and
+        every later call failed. A second failure is the caller's to report.
+        """
+        try:
+            if self.conn is None:
+                raise NotConnectedError("not connected")
+            return getattr(self.conn, method)(*args, **kwargs)
+        except _LOST:
+            self._reconnect()
+            return getattr(self.conn, method)(*args, **kwargs)
 
     def _listing(self, remote_dir):
         """Cached {filename: size} for a remote directory.
@@ -171,9 +221,11 @@ class RemoteCopy(CopyBackend):
         key = remote_dir or '/'
         if key not in self._listing_cache:
             try:
-                entries = self.conn.listPath(self.share_name, key)
+                entries = self._call("listPath", self.share_name, key)
             except smb_structs.OperationFailure:
                 entries = []
+            except _FAILED as error:
+                raise BackendError(f"Could not list {key}: {_brief(error)}") from error
             self._listing_cache[key] = {entry.filename: entry.file_size for entry in entries}
         return self._listing_cache[key]
 
@@ -208,19 +260,30 @@ class RemoteCopy(CopyBackend):
         the pinned older one is a TypeError.
         """
         partial = remote + ".part"
+        start = handle.tell()
         try:
-            self.conn.storeFile(self.share_name, partial, handle, timeout=30)
+            try:
+                self.conn.storeFile(self.share_name, partial, handle, timeout=30)
+            except _LOST:
+                # Once more on a fresh session, from the start of the file: a
+                # half-written .part is overwritten, and what was counted is taken
+                # back so the progress bar does not run past the total.
+                if hasattr(handle, "rewind"):
+                    handle.rewind(start)
+                else:
+                    handle.seek(start)
+                self._reconnect()
+                self.conn.storeFile(self.share_name, partial, handle, timeout=30)
             self._delete_quietly(remote)
-            self.conn.rename(self.share_name, partial, remote)
-        except (smb_structs.OperationFailure, smb_structs.ProtocolError,
-                socket.error) as error:
+            self._call("rename", self.share_name, partial, remote)
+        except _FAILED as error:
             self._delete_quietly(partial)
             raise BackendError(f"Upload of '{remote}' failed: {_brief(error)}") from error
 
     def _delete_quietly(self, remote):
         try:
-            self.conn.deleteFiles(self.share_name, remote)
-        except (smb_structs.OperationFailure, smb_structs.ProtocolError, socket.error):
+            self._call("deleteFiles", self.share_name, remote)
+        except _FAILED:
             pass
 
     def write_text(self, relpath, text):
@@ -266,7 +329,7 @@ class RemoteCopy(CopyBackend):
             if basepath in self._known_dirs:
                 continue
             try:
-                self.conn.createDirectory(self.share_name, basepath)
+                self._call("createDirectory", self.share_name, basepath)
             except smb_structs.OperationFailure:
                 # Almost always "already exists"; a real permission problem still
                 # surfaces on the following listPath/storeFile.
@@ -288,9 +351,9 @@ class RemoteCopy(CopyBackend):
 
     def probe(self):
         try:
-            entries = self.conn.listPath(self.share_name, self.remote_path.strip("/") or "/")
-        except (smb_structs.OperationFailure, smb_structs.ProtocolError,
-                socket.error) as error:
+            entries = self._call("listPath", self.share_name,
+                                 self.remote_path.strip("/") or "/")
+        except _FAILED as error:
             raise BackendError(f"Connected to {self.server}, but {self.share_name}/"
                                f"{self.remote_path} could not be listed: "
                                f"{_brief(error)}") from error
@@ -304,9 +367,14 @@ class RemoteCopy(CopyBackend):
         while pending:
             current = pending.pop()
             try:
-                entries = self.conn.listPath(self.share_name, current or "/")
+                entries = self._call("listPath", self.share_name, current or "/")
             except smb_structs.OperationFailure:
                 continue
+            except _FAILED as error:
+                # A half-walked library reads as missing everything it did not reach:
+                # all of it planned as new, the rest as orphans. Better to stop.
+                raise BackendError(f"Lost the share while listing {current or '/'}: "
+                                   f"{_brief(error)}") from error
             for entry in entries:
                 if entry.filename in (".", ".."):
                     continue
@@ -321,7 +389,7 @@ class RemoteCopy(CopyBackend):
         return found
 
     def open_read(self, relpath):
-        return SmbReadable(self.conn, self.share_name, self._absolute(relpath))
+        return SmbReadable(_Retrying(self), self.share_name, self._absolute(relpath))
 
     def _absolute(self, relpath):
         return posixpath.join(self.remote_path, relpath).strip("/")
@@ -335,16 +403,17 @@ class RemoteCopy(CopyBackend):
             raise BackendError(f"{to_relpath} is already there; {from_relpath} was "
                                f"left where it is")
         try:
-            self.conn.rename(self.share_name, self._absolute(from_relpath), target)
-        except (smb_structs.OperationFailure, smb_structs.ProtocolError,
-                socket.error) as error:
+            self._call("rename", self.share_name, self._absolute(from_relpath), target)
+        except _FAILED as error:
             raise BackendError(f"Could not rename {from_relpath}: "
                                f"{_brief(error)}") from error
         self._listing_cache.clear()
 
     def delete(self, relpath):
         try:
-            self.conn.deleteFiles(self.share_name, self._absolute(relpath))
+            self._call("deleteFiles", self.share_name, self._absolute(relpath))
         except smb_structs.OperationFailure:
             pass
+        except _FAILED as error:
+            raise BackendError(f"Could not delete {relpath}: {_brief(error)}") from error
         self._listing_cache.clear()

@@ -51,6 +51,31 @@ class TestReadWrite:
         assert history[0]["from"] is None and history[0]["to"] == "0.282"
         assert history[1]["from"] == "0.282" and history[1]["to"] == "0.289"
 
+    def test_an_unfinished_run_does_not_move_the_release(self, tmp_path):
+        """An interrupted 0.289 -> 0.290 run recorded 0.290, and the next upgrade was
+        priced from there, missing every machine not yet moved."""
+        config = Config(copy_path=str(tmp_path))
+        manifest.write(str(tmp_path), config, "0.289", Fake())
+
+        class Stopped(Fake):
+            cancelled = True
+
+        class Failing(Fake):
+            failed = 3
+        manifest.write(str(tmp_path), config, "0.290", Stopped())
+        manifest.write(str(tmp_path), config, "0.290", Failing())
+        record = manifest.read(str(tmp_path))
+        assert record["mame_version"] == "0.289"
+        assert record["history"][-1]["to"] == "0.290", "the attempt is still on record"
+        manifest.write(str(tmp_path), config, "0.290", Fake())
+        assert manifest.read(str(tmp_path))["mame_version"] == "0.290"
+
+    def test_a_first_run_that_stopped_still_names_a_release(self, tmp_path):
+        class Stopped(Fake):
+            cancelled = True
+        manifest.write(str(tmp_path), Config(copy_path=str(tmp_path)), "0.289", Stopped())
+        assert manifest.read(str(tmp_path))["mame_version"] == "0.289"
+
     def test_history_is_capped(self, tmp_path):
         config = Config(copy_path=str(tmp_path))
         for _ in range(manifest.MAX_HISTORY + 8):

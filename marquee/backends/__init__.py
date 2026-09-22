@@ -5,7 +5,10 @@ root the backend was built with, and is responsible for skipping files that are 
 there at the same size. Adding a protocol means adding a module here and a line to
 `for_destination`.
 """
+import re
+
 from ..errors import ConfigError, MarqueeError
+
 
 class BackendError(MarqueeError):
     """A destination operation failed: a rename refused, a share gone away.
@@ -88,6 +91,16 @@ class CopyBackend:
         """
         raise NotImplementedError
 
+    def read_file(self, relpath):
+        """The whole of a small file at the destination as bytes, or None when it is
+        not there. For files we rewrite -- a gamelist EmulationStation has been adding
+        favourites to -- so what is already in them can be kept."""
+        try:
+            with self.open_read(relpath) as handle:
+                return handle.read()
+        except FileNotFoundError:
+            return None
+
     def put_file(self, source, relpath):
         """Copy one local file to an exact relative path.
 
@@ -110,6 +123,53 @@ def is_remote(copy_path):
     process happened to be started.
     """
     return bool(copy_path) and copy_path.startswith(SCHEMES)
+
+
+# What a hidden password looks like on the page -- the same row of dots the download
+# client's password comes back as.
+MASK = "\u2022" * 8
+# scheme://userinfo@ -- greedy up to the last '@' before the path, the way the SMB
+# parser reads it, so an '@' inside the password stays with the password.
+_USERINFO = re.compile(r"^([a-z]+://)([^/]*)@")
+
+
+def _split(destination):
+    """(scheme, user, password, rest) of a remote destination, or None."""
+    match = _USERINFO.match(destination or "")
+    if not match:
+        return None
+    user, _, password = match.group(2).partition(":")
+    return match.group(1), user, password, destination[match.end():]
+
+
+def redact(destination):
+    """The destination with its password hidden, for anything a person or a log sees.
+
+    A library on a share carries its credentials inside the URL, and that URL went
+    out verbatim on every poll of /api/state and in every "could not reach" error.
+    """
+    parts = _split(destination) if is_remote(destination) else None
+    if not parts or not parts[2]:
+        return destination
+    scheme, user, _password, rest = parts
+    return f"{scheme}{user}:{MASK}@{rest}"
+
+
+def unmask(given, saved):
+    """Put the saved password back into a destination that came back masked.
+
+    Only onto the same server and user: a masked URL pointing somewhere new would
+    otherwise send the saved password to whoever answers there.
+    """
+    if not given or MASK not in given:
+        return given
+    new, old = _split(given), _split(saved or "")
+    if new and old and new[2] == MASK and new[:2] == old[:2] \
+            and new[3].split("/", 1)[0] == old[3].split("/", 1)[0]:
+        scheme, user, _mask, rest = new
+        return f"{scheme}{user}:{old[2]}@{rest}"
+    raise ConfigError("The library's password is hidden on the page and cannot be "
+                      "reused for a different server or user; type it in again.")
 
 
 def for_destination(copy_path, reporter=None, hardlink=False):

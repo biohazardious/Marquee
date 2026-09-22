@@ -109,12 +109,24 @@ async function doRefresh() {
   return state.data;
 }
 
+let polling = false;
+
+/* Safe to call again: a loop already running is left alone. A 401 ends the loop --
+   there is no point asking with a key the server refused -- and unlocking starts it
+   again. It used not to: the page went on showing a frozen state after the new key
+   was accepted. */
 export function startPolling(onUnauthorised) {
+  if (polling) return;
+  polling = true;
   const tick = async () => {
     try {
       await refresh();
     } catch (error) {
-      if (error instanceof Unauthorised) { onUnauthorised?.(error); return; }
+      if (error instanceof Unauthorised) {
+        polling = false;
+        onUnauthorised?.(error);
+        return;
+      }
       /* anything else: the page shows the last good state */
     }
     const busy = ['planning', 'copying', 'checking'].includes(state.data.state);

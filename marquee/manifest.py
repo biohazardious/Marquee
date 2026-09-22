@@ -99,7 +99,13 @@ def write(copy_path, config, mame_version, summary, previous=None):
     document = {
         "format": FORMAT,
         "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "mame_version": mame_version,
+        # Only a run that finished moves the library to the new release. Written
+        # regardless, an interrupted 0.289 -> 0.290 run recorded 0.290, and the next
+        # upgrade was priced from there -- missing every machine not yet moved.
+        "mame_version": (mame_version
+                         if not (summary.cancelled or getattr(summary, "failed", 0))
+                         or not record.get("mame_version")
+                         else record.get("mame_version")),
         "settings": {key: getattr(config, key) for key in SETTING_KEYS},
         "stats": {"machines": summary.machines, "files": summary.files,
                   "bytes": summary.destination_bytes},
