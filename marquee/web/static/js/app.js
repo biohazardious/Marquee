@@ -1,6 +1,6 @@
 /* The shell: sidebar, routing, and the few actions that span pages. */
 
-import { $, append, banner, clear, count, debounce, duration, el, human } from './util.js';
+import { $, append, banner, clear, count, debounce, duration, el, human, plural } from './util.js';
 import * as api from './api.js';
 import * as changes from './changes.js';
 import * as leftout from './leftout.js';
@@ -184,7 +184,7 @@ function filteredOut(resolution) {
   const total = rows.reduce((sum, entry) => sum + entry.count, 0);
   return el('div', { class: 'panel' },
     el('h2', {}, 'Left out',
-      el('span', { class: 'sub', text: `${count(total)} machines` })),
+      el('span', { class: 'sub', text: `${plural(total, 'machine', 'machines')}` })),
     el('div', { class: 'body tight' },
       el('table', { class: 'grid' },
         el('tbody', {}, rows.map((entry) => el('tr', { style: 'cursor:default' },
@@ -254,7 +254,7 @@ function unlock() {
     el('div', { class: 'scrim', id: 'unlockScrim' }),
     el('form', { class: 'unlock', id: 'unlockPanel',
       onsubmit: (event) => { event.preventDefault(); submit(); } },
-      el('div', { class: 'mark', text: '🕹' }),
+      el('div', { class: 'mark', 'aria-hidden': 'true', html: BRAND_MARK }),
       el('h2', { text: 'Marquee' }),
       el('p', { class: 'muted' },
         'This server is listening beyond this machine, so it asks for its API key.'),
@@ -448,6 +448,11 @@ function onState(data) {
   if (page === 'settings') settings.renderVersions(data.versions);
 }
 
+// The sidebar's own mark, for the one screen that has no sidebar.
+const BRAND_MARK = '<svg viewBox="0 0 32 32" width="40" height="40">'
+  + '<rect x="4" y="6" width="24" height="20" rx="3" fill="#241a05"/>'
+  + '<path d="M8 26V10h3v9h2v-9h3v16zM19 12h6v3h-6zM19 17h6v3h-6z" fill="#f5a524"/></svg>';
+
 let settingsAdopted = false;
 let hadPlan = false;
 let lastState = '';
@@ -537,7 +542,7 @@ function renderStatusJob(data) {
       + (plan.sync?.move?.count || 0);
     append(host, icon('check'), el('b', { text: 'Plan ready' }),
       el('span', { class: 'muted', text: moving
-        ? `${count(moving)} files · ${plan.to_transfer_human} to transfer`
+        ? `${plural(moving, 'file', 'files')} · ${plan.to_transfer_human} to transfer`
         : 'nothing to transfer' }));
     host.className = 'status-job';
     return;
@@ -613,8 +618,8 @@ function updateSelectionSummary() {
   // the second is zero and saying "0 games selected" under a full tree is nonsense.
   clear(host);
   host.append(matches
-    ? `${count(plan.wanted)} games · ${plan.wanted_bytes_human || plan.bytes_human} selected`
-    : `about ${count(estimate.games)} games · ${human(estimate.bytes)} — build a plan to confirm`);
+    ? `${plural(plan.wanted, 'game', 'games')} · ${plan.wanted_bytes_human || plan.bytes_human} selected`
+    : `about ${plural(estimate.games, 'game', 'games')} · ${human(estimate.bytes)} — build a plan to confirm`);
   // The part that is easy to miss: unticking a game that is already on the console
   // is asking for it to leave. Said here, where the tick was, and not only under
   // "Delete" on the Transfer page after a rebuild.
@@ -779,6 +784,20 @@ async function boot() {
   selBar.condition.id = 'selCondition';
   $('selAdult').replaceWith(selBar.adult);
   selBar.adult.id = 'selAdult';
+  // Every filter says what it filters. Eight bare menus reading "Any", "Everything"
+  // and "Title screens" in a row left the reader to guess which was which.
+  for (const [id, caption] of [
+    ['libGenre', 'Genre'], ['libHave', 'Have'], ['libCondition', 'Emulation'],
+    ['libState', 'Check'], ['libStatus', 'Transfer'], ['libAdult', 'Adult'],
+    ['libArt', 'Art'], ['selGenre', 'Genre'], ['selHave', 'Have'],
+    ['selCondition', 'Emulation'], ['selAdult', 'Adult'],
+  ]) {
+    const control = $(id);
+    if (!control) continue;
+    const wrap = el('label', { class: 'pick' }, el('span', { text: caption }));
+    control.replaceWith(wrap);
+    wrap.append(control);
+  }
   $('selSave').onclick = saveSelection;
   $('selRevert').onclick = revertSelection;
   $('refreshReleases').onclick = async (event) => {

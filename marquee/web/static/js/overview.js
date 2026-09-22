@@ -4,7 +4,7 @@
    the library on the console -- and until now no page said which step you were on.
    Seven pages of numbers is not the same as one answer to "what now?". */
 
-import { $, append, banner, clear, count, el, human, pressable } from './util.js';
+import { $, append, banner, clear, count, el, human, plural, pressable } from './util.js';
 import { post, state } from './api.js';
 import { icon } from './icons.js';
 
@@ -56,11 +56,11 @@ export function nextStep(data) {
   }
   if (transfer) {
     return { tone: 'good', title: `${plan.to_transfer_human || ''} ready to go into the library`.trim(),
-             text: `${count(transfer)} files are waiting to be copied, replaced or moved. See exactly which before it runs.`,
+             text: `${plural(transfer, 'file', 'files')} are waiting to be copied, replaced or moved. See exactly which before it runs.`,
              action: 'Preview the transfer', page: 'changes' };
   }
   if (missing) {
-    return { tone: 'info', title: `${count(missing)} games are selected but not downloaded`,
+    return { tone: 'info', title: `${plural(missing, 'game', 'games')} are selected but not downloaded`,
              text: config.download_client
                ? 'Only the missing files are asked for; anything you are seeding keeps seeding.'
                : 'Set a download client in Settings and they can be fetched from here.',
@@ -233,8 +233,8 @@ function healthPanel(data) {
         : watch.newest ? `MAME ${watch.newest} is the newest published` : 'release list not read yet'),
     line(!plan ? 'off' : !checked ? 'off' : (stale || damaged) ? 'warn' : 'good', 'Library check',
       !plan ? 'no plan yet' : !checked ? 'nothing has looked inside the files yet'
-        : (stale || damaged) ? `${count(stale + damaged)} files are out of date or damaged`
-        : `${count(plan.states.current || 0)} files match the release`),
+        : (stale || damaged) ? `${plural(stale + damaged, 'file', 'files')} are out of date or damaged`
+        : `${plural(plan.states.current || 0, 'file', 'files')} match the release`),
     plan?.fits === false
       ? line('bad', 'Free space', `short by ${plan.short_human} for the next transfer`)
       : null,
@@ -252,7 +252,8 @@ function line(tone, label, text) {
   return el('li', { class: tone },
     icon(tone === 'good' ? 'check' : tone === 'bad' || tone === 'warn' ? 'warn' : 'info'),
     el('b', { text: label }),
-    el('span', { class: 'muted', text }));
+    // Paths are long and the line truncates them: the whole of it on hover.
+    el('span', { class: 'muted', text, title: text }));
 }
 
 function spacePanel(data) {

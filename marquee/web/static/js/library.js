@@ -2,7 +2,7 @@
    with a detail panel behind each one. */
 
 import { icon } from './icons.js';
-import { $, append, badges, banner, clear, count, debounce, el, hero, human, pressable, shot, store, stored, subtitle } from './util.js';
+import { $, append, badges, banner, clear, count, debounce, el, hero, human, plural, pressable, shot, store, stored, subtitle } from './util.js';
 import { api, lock, machine as fetchMachine, machines as fetchMachines, post, state } from './api.js';
 
 const V = {
@@ -76,7 +76,10 @@ function poster(m) {
   // with the image absolutely positioned there was nothing left in flow to give the
   // inner one a width -- so it collapsed to nothing the moment the image loaded.
   const art = shot(m, V.art, cacheBust);
-  art.append(el('div', { class: 'corner' }, badges(m).slice(0, 2)));
+  // "Missing" is said by the poster itself -- unlit, like a cabinet switched off --
+  // not by a badge that on a fresh library sat on every single card.
+  art.append(el('div', { class: 'corner' },
+    badges({ ...m, status: m.status === 'missing' ? '' : m.status }).slice(0, 2)));
   return pressable(el('div', { class: `poster ${m.here ? '' : 'absent'}`, onclick: () => open(m.name) },
     art,
     el('div', { class: 'meta' },
@@ -165,7 +168,7 @@ export function render() {
       (genre) => genre.name === V.genre && genre.excluded);
     const active = chips();
     const empty = el('div', { class: 'empty' },
-      el('div', { class: 'big', text: unchecked ? '🔍' : '🕹' }),
+      el('div', { class: 'big' }, icon(unchecked ? 'search' : 'library')),
       el('div', { text: unchecked
         ? 'Nothing has looked inside the files yet, so no game has a check result.'
         : outGenre
@@ -310,12 +313,12 @@ export function toolbar() {
 
   const genres = el('select', {
     onchange: (event) => { V.genre = event.target.value; V.offset = 0; load(); },
-  }, el('option', { value: '', text: 'All genres' }));
+  }, el('option', { value: '', text: 'All' }));
 
   const statuses = el('select', {
     onchange: (event) => { V.status = event.target.value; V.offset = 0; load(); },
   },
-    el('option', { value: '', text: 'Any action' }),
+    el('option', { value: '', text: 'Any' }),
     // The same words the Transfer page uses. Two pages describing one run in two
     // vocabularies -- `keep` here, "Leave alone" there -- is a puzzle nobody asked for.
     // "Not downloaded" is the Have filter's job; offering it twice under two names
@@ -327,7 +330,7 @@ export function toolbar() {
   const have = el('select', {
     onchange: (event) => { V.have = event.target.value; V.offset = 0; load(); },
   }, [
-    ['', 'All games'],
+    ['', 'All'],
     ['no', 'Not downloaded'],
     ['yes', 'On disk'],
   ].map(([value, label]) => el('option', { value, text: label, selected: V.have === value })));
@@ -335,7 +338,7 @@ export function toolbar() {
   const condition = el('select', {
     onchange: (event) => { V.condition = event.target.value; V.offset = 0; load(); },
   }, [
-    ['', 'Any condition'],
+    ['', 'Any'],
     ['good', 'Fully emulated'],
     ['flawed', 'Imperfect'],
   ].map(([value, label]) => el('option', { value, text: label,
@@ -348,7 +351,7 @@ export function toolbar() {
   const checkResult = el('select', {
     onchange: (event) => { V.state = event.target.value; V.offset = 0; load(); },
   }, [
-    ['', 'Any check result'],
+    ['', 'Any'],
     ['stale', 'Out of date'],
     ['incomplete', 'Missing an inherited ROM'],
     ['current', 'Verified current'],
@@ -360,9 +363,9 @@ export function toolbar() {
   const adult = el('select', {
     onchange: (event) => { V.mature = event.target.value; V.offset = 0; load(); },
   }, [
-    ['', 'Everything'],
-    ['hide', 'Hide adult'],
-    ['only', 'Adult only'],
+    ['', 'Shown'],
+    ['hide', 'Hidden'],
+    ['only', 'Only'],
   ].map(([value, label]) => el('option', { value, text: label, selected: V.mature === value })));
 
   const art = el('select', {
@@ -437,7 +440,7 @@ export function fillGenres(select, plan) {
   select.dataset.signature = signature;
   const current = V.genre;
   clear(select);
-  select.append(el('option', { value: '', text: 'All genres' }));
+  select.append(el('option', { value: '', text: 'All' }));
   kept.forEach((genre) => select.append(el('option', {
     value: genre.name, selected: genre.name === current, text: label(genre) })));
   if (out.length) {
@@ -697,7 +700,7 @@ async function downloadDrawer() {
   body.append(
     el('div', { class: 'stat big-stat' },
       el('b', { text: quote.bytes_human }),
-      el('span', { class: 'muted', text: `to download for ${count(quote.chosen)} games` })),
+      el('span', { class: 'muted', text: `to download for ${plural(quote.chosen, 'game', 'games')}` })),
     el('div', { class: 'hint', text:
       `${count(quote.machines)} ROM${quote.machines === 1 ? '' : 's'}`
       + (quote.disks ? ` and ${count(quote.disks)} disk${quote.disks === 1 ? '' : 's'}` : '')
@@ -706,7 +709,7 @@ async function downloadDrawer() {
       el('tbody', {}, parts.map((part) => el('tr', { style: 'cursor:default' },
         el('td', {}, el('b', { text: part.kind === 'chds' ? 'Disks' : 'ROMs' }),
           el('small', { class: 'dim', text: part.release || '' })),
-        el('td', { class: 'num nowrap', text: part.error ? '—' : `${count(part.files)} files` }),
+        el('td', { class: 'num nowrap', text: part.error ? '—' : `${plural(part.files, 'file', 'files')}` }),
         el('td', { class: 'num nowrap', text: part.error ? '' : part.bytes_human })))))
   );
 

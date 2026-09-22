@@ -209,12 +209,12 @@ FETCH = "fetch"
 CHANGES = (
     (sync.NEW, "Copy over", "games the library does not have yet"),
     (sync.UPDATE, "Replace", "there already, but not what this release says it is"),
-    (sync.MOVE, "Move", "the same file, in a folder this release no longer uses -- "
+    (sync.MOVE, "Move", "the same file, in a folder this release no longer uses \u2014 "
                         "renamed, never re-copied"),
-    (sync.ORPHAN, "Delete", "in the library, wanted by nothing -- left alone unless "
+    (sync.ORPHAN, "Delete", "in the library, wanted by nothing \u2014 left alone unless "
                             "you ask for them to go"),
     (sync.KEEP, "Leave alone", "already correct, and not touched"),
-    (FETCH, "Fetch first", "wanted, with nothing here to copy from -- download them "
+    (FETCH, "Fetch first", "wanted, with nothing here to copy from \u2014 download them "
                            "and this run can place them"),
 )
 
@@ -400,7 +400,7 @@ def _fetch_rows(plan, needle, sizes, needed=None):
                 and needle not in item.description.lower():
             continue
         if item.state in (verify.STALE, verify.DAMAGED):
-            why = "out of date -- the library's copy is not this release"
+            why = "out of date \u2014 the library's copy is not this release"
         elif item.in_library:
             why = "in the library, but not complete"
         else:

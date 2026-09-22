@@ -502,9 +502,9 @@ def serve(settings_path, host="127.0.0.1", port=8777, open_browser=False):
         import webbrowser
         webbrowser.open(url)
 
-    # `docker stop` sends SIGTERM, and the process is PID 1 in the container, where
-    # the kernel drops a signal nobody handles: the stop sat out Docker's ten seconds
-    # and ended in SIGKILL, mid-file, with no record of the run written.
+    # `docker stop` sends SIGTERM; tini, PID 1 in the image, passes it on. With no
+    # handler Python died of it on the spot (exit 143): a transfer stopped mid-file,
+    # with no record of the run written. Now it is a stop between files (exit 0).
     try:
         signal.signal(signal.SIGTERM, _terminate)
     except ValueError:

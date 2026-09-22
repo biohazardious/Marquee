@@ -1,6 +1,6 @@
 /* Activity: what the job is doing now, and what the download client is fetching. */
 
-import { $, append, clear, count, duration, el, human } from './util.js';
+import { $, append, clear, count, duration, el, human, plural } from './util.js';
 import { log, refreshQueue, state as store } from './api.js';
 
 let lastQueue = null;
@@ -68,7 +68,7 @@ function jobPanel(data) {
     body.append(el('div', { class: 'muted', style: 'margin-top:14px', text: `${label}…` }));
   } else if (state === 'planned' && data.plan) {
     body.append(el('div', { class: 'muted', style: 'margin-top:14px',
-      text: `${count(data.plan.wanted)} games selected, ${count(data.plan.machines)} on disk. `
+      text: `${plural(data.plan.wanted, 'game', 'games')} selected, ${count(data.plan.machines)} on disk. `
         + 'The Transfer page says what a run would do.' }));
   }
 
@@ -170,6 +170,6 @@ function logPanel(place = { top: 0, atEnd: true }) {
     lines.slice(-300).map((event) => el('div', { class: event.kind, text: event.text })));
   requestAnimationFrame(() => { box.scrollTop = place.atEnd ? box.scrollHeight : place.top; });
   return el('div', { class: 'panel' },
-    el('h2', {}, 'Log', el('span', { class: 'sub', text: `${count(lines.length)} lines` })),
+    el('h2', {}, 'Log', el('span', { class: 'sub', text: `${plural(lines.length, 'line', 'lines')}` })),
     el('div', { class: 'body' }, lines.length ? box : el('div', { class: 'muted', text: 'Nothing logged yet.' })));
 }

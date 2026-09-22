@@ -40,7 +40,7 @@ packages = ["marquee", "marquee.backends", "marquee.download",
             "marquee.indexers", "marquee.web"]
 
 [tool.setuptools.package-data]
-"marquee.web" = ["static/*", "static/js/*"]
+"marquee.web" = ["static/*", "static/js/*", "static/fonts/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

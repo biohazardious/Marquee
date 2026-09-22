@@ -8,7 +8,7 @@
    search and no tree. */
 
 import { icon } from './icons.js';
-import { $, append, badges, clear, count, debounce, el } from './util.js';
+import { $, append, badges, clear, count, debounce, el, plural } from './util.js';
 import { INDENT, branchRow, keepingFocus } from './tree.js';
 import { api, machines as fetchMachines, post, refresh } from './api.js';
 
@@ -272,7 +272,7 @@ function controls() {
 }
 
 function refreshControls() {
-  BAR.count.textContent = `${count(V.total)} machines`;
+  BAR.count.textContent = `${plural(V.total, 'machine', 'machines')}`;
   BAR.bytes.textContent = V.bytesHuman || '';
 
   clear(BAR.reason);
@@ -322,7 +322,7 @@ function draw(host) {
     BAR.root = null;
     clear(host);
     host.append(el('div', { class: 'empty' },
-      el('div', { class: 'big', text: '\u{1f5c3}' }),
+      el('div', { class: 'big' }, icon('leftout')),
       el('div', {
         text: V.loaded
           ? 'Nothing was left out.'
@@ -343,7 +343,7 @@ function draw(host) {
 
   if (!V.total) {
     rest.append(el('div', { class: 'empty' },
-      el('div', { class: 'big', text: '\u2315' }),
+      el('div', { class: 'big' }, icon('search')),
       el('div', { text: 'Nothing left out matches that.' }),
       el('button', {
         class: 'btn sm', text: 'Clear the filters', onclick: clearFilters,

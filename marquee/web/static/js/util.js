@@ -60,6 +60,9 @@ export function human(bytes) {
 
 export const count = (n) => (n || 0).toLocaleString();
 
+/* "1 file", "2 files": the page said "Also delete the 1 files nothing wants". */
+export const plural = (n, one, many) => `${count(n)} ${n === 1 ? one : many}`;
+
 export function duration(seconds) {
   // 8,640,000 is qBittorrent's "no idea": it reports exactly that for anything that
   // is not moving, and the guard used to let it through as a confident "2400h 0m".

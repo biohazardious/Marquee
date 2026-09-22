@@ -4,7 +4,8 @@
    nobody downloads all of it at once -- so "what am I missing, and what would it
    cost" deserves a page rather than a wall of names in a log. */
 
-import { $, append, clear, count, el, human } from './util.js';
+import { icon } from './icons.js';
+import { $, append, clear, count, el, human, plural } from './util.js';
 import { api, lock, post } from './api.js';
 
 let data = null;
@@ -41,7 +42,7 @@ export function render() {
 
   if (!data.total) {
     host.append(el('div', { class: 'empty' },
-      el('div', { class: 'big', text: '✓' }),
+      el('div', { class: 'big' }, icon('check')),
       el('div', { text: 'Nothing missing — every game the selection wants is on disk.' })));
     // A complete library is exactly the one that gets moved to a newer release, so
     // the panel that prices that cannot hide behind "nothing missing".
@@ -50,9 +51,10 @@ export function render() {
     return;
   }
 
-  host.append(el('div', { class: 'cards' },
-    stat('Missing games', count(data.total)),
-    stat('Download size', sizeLabel(data), sizeNote(data)),
+  // One number is the point of this page; the other two qualify it.
+  host.append(el('div', { class: 'cards scoreboard' },
+    stat('Games missing', count(data.total), null, { lead: true }),
+    stat('To download', sizeLabel(data), sizeNote(data), { quiet: !data.bytes }),
     stat('Disks to fetch', count((data.disks || []).length))));
 
   host.append(upgradePanel());
@@ -157,21 +159,21 @@ function result(data) {
   const outcome = el('div');
   append(box,
     el('div', { class: 'banner info' },
-      `${count(data.fetch.length)} games to fetch to move from ${data.from} to ${data.to}. `
+      `${plural(data.fetch.length, 'game', 'games')} to fetch to move from ${data.from} to ${data.to}. `
       + `The other ${count(data.unchanged)} are already the right bytes on disk.`),
     data.examples.length
       ? el('div', { class: 'hint', style: 'margin-bottom:10px',
           text: `Changed, for instance: ${data.examples.join(', ')}` })
       : null,
     el('button', {
-      class: 'btn primary', text: `Fetch ${count(data.fetch.length)} games`,
+      class: 'btn primary', text: `Fetch ${plural(data.fetch.length, 'game', 'games')}`,
       onclick: async (event) => {
         event.target.disabled = true;
         clear(outcome);
         try {
           const done = await post('/api/missing/fetch', { machines: data.fetch });
           outcome.append(el('div', { class: 'banner good' },
-            `Asked for ${count(done.selected)} files (${done.bytes_human}). `
+            `Asked for ${plural(done.selected, 'file', 'files')} (${done.bytes_human}). `
             + `${count(done.raised)} newly selected. Watch Activity.`));
         } catch (error) {
           outcome.append(el('div', { class: 'banner bad', text: error.message }));
@@ -248,7 +250,7 @@ function fetchPanel() {
             el('tbody', {}, parts.map((part) => el('tr', { style: 'cursor:default' },
               el('td', {}, el('b', { text: part.kind === 'chds' ? 'Disks' : 'ROMs' }),
                 el('small', { class: 'dim', text: part.release || '' })),
-              el('td', { class: 'num nowrap', text: part.error ? '—' : `${count(part.files)} files` }),
+              el('td', { class: 'num nowrap', text: part.error ? '—' : `${plural(part.files, 'file', 'files')}` }),
               el('td', { class: 'num nowrap', text: part.error ? '' : part.bytes_human }))))),
           ...parts.filter((part) => part.missing_count).map((part) => el('div', { class: 'hint', text:
             `${count(part.missing_count)} not in ${part.release}: `
@@ -305,10 +307,10 @@ function sizeNote(data) {
   return 'connect a download client to price it';
 }
 
-function stat(key, value, note) {
-  return el('div', { class: 'card' },
+function stat(key, value, note, { lead = false, quiet = false } = {}) {
+  return el('div', { class: `card ${lead ? 'lead' : ''}` },
     el('div', { class: 'k', text: key }),
-    el('div', { class: 'v accent', text: value }),
+    el('div', { class: `v ${quiet ? 'quiet' : 'accent'}`, text: value }),
     note ? el('div', { class: 'n', text: note }) : null);
 }
 

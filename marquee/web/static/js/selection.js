@@ -5,7 +5,8 @@
    has to leave its siblings off -- so they live in their own block and are exercised
    by tests/test_selection_logic.py under node. */
 
-import { $, append, badges, banner, clear, count, el } from './util.js';
+import { icon } from './icons.js';
+import { $, append, badges, banner, clear, count, el, plural } from './util.js';
 import { INDENT, branchRow, keepingFocus, tickBox, wantedOf, weightOf } from './tree.js';
 import { api, machines as fetchMachines } from './api.js';
 import { open as openGame } from './library.js';
@@ -369,7 +370,7 @@ async function applyToAll(wanted, button) {
     const machines = await everyMatch();
     if (!wanted && machines.length >= LOUD && !confirmed) {
       asking = true;
-      button.textContent = `Leave ${count(machines.length)} games out — confirm`;
+      button.textContent = `Leave ${plural(machines.length, 'game', 'games')} out — confirm`;
       return;
     }
     await ready();
@@ -537,7 +538,7 @@ function nothingMatched() {
     return drop;
   });
   return el('div', { class: 'empty' },
-    el('div', { class: 'big', text: '🕹' }),
+    el('div', { class: 'big' }, icon('selection')),
     el('div', { text: active.length > 1
       ? 'No game matches all of these at once.'
       : 'Nothing matches that.' }),
@@ -571,7 +572,7 @@ function draw(host) {
 
   if (!S.genres.length) {
     host.append(el('div', { class: 'empty' },
-      el('div', { class: 'big', text: '🕹' }),
+      el('div', { class: 'big' }, icon('selection')),
       el('div', { text: 'Build a plan first and the genres will appear here.' })));
   }
 }
@@ -677,21 +678,21 @@ export function toolbar() {
     search: el('input', {
       type: 'text', placeholder: 'Find a game…', value: S.filters.query,
     }),
-    genres: pick('genre', [['', 'All genres']]),
+    genres: pick('genre', [['', 'All']]),
     condition: pick('condition', [
-      ['', 'Any condition'],
+      ['', 'Any'],
       ['good', 'Fully emulated'],
       ['flawed', 'Imperfect'],
     ]),
     have: pick('have', [
-      ['', 'Downloaded or not'],
+      ['', 'All'],
       ['no', 'Not downloaded'],
       ['yes', 'On disk'],
     ]),
     adult: pick('mature', [
-      ['', 'Everything'],
-      ['hide', 'Hide adult'],
-      ['only', 'Adult only'],
+      ['', 'Shown'],
+      ['hide', 'Hidden'],
+      ['only', 'Only'],
     ]),
   };
 }
@@ -706,7 +707,7 @@ export function fillGenres(select, plan) {
   select.dataset.signature = labels.join('|');
   const current = S.filters.genre;
   clear(select);
-  select.append(el('option', { value: '', text: 'All genres' }));
+  select.append(el('option', { value: '', text: 'All' }));
   (plan.genres || []).forEach((genre, index) => select.append(el('option', {
     value: genre.name, selected: genre.name === current, text: labels[index],
   })));

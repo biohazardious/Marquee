@@ -7,7 +7,7 @@
    deleted and what they were. */
 
 import { icon } from './icons.js';
-import { $, append, clear, count, el, human, pressable, store, stored } from './util.js';
+import { $, append, clear, count, el, human, plural, pressable, store, stored } from './util.js';
 import { api, lock, post, state } from './api.js';
 
 const V = {
@@ -103,9 +103,9 @@ function kindRow(entry) {
     el('td', {}, el('span', { class: `badge ${TONE[entry.kind]}`, text: entry.label })),
     el('td', { class: 'muted', text: entry.note }),
     el('td', { class: 'num nowrap',
-      text: entry.kind === 'orphan' ? '—' : `${count(entry.machines)} games` }),
+      text: entry.kind === 'orphan' ? '—' : `${plural(entry.machines, 'game', 'games')}` }),
     el('td', { class: 'num nowrap',
-      text: entry.kind === 'fetch' ? '—' : `${count(entry.files)} files` }),
+      text: entry.kind === 'fetch' ? '—' : `${plural(entry.files, 'file', 'files')}` }),
     el('td', { class: 'num nowrap', text: entry.bytes ? human(entry.bytes) : '—' }));
   return nothing ? row : pressable(row, choose);
 }
@@ -138,7 +138,7 @@ function checkNote(data) {
     // telling you something it can see is not true.
     const replacing = (data.kinds.find((one) => one.kind === 'update') || {}).machines;
     return el('div', { class: 'banner warn' },
-      `${count(bad)} games in the library are not what this release says they are. `
+      `${plural(bad, 'game', 'games')} in the library are not what this release says they are. `
       + (replacing
         ? 'The ones with a downloaded file to put in their place are under Replace; '
           + 'the rest are under Fetch first.'
@@ -166,7 +166,7 @@ function deletePanel(data) {
   box.onchange = () => { V.remove = box.checked; V.armed = false; render(); };
   return el('label', { class: 'check' }, box,
     el('span', {},
-      el('b', { text: `Also delete the ${count(entry.files)} files nothing wants` }),
+      el('b', { text: `Also delete the ${plural(entry.files, 'file', 'files')} nothing wants` }),
       el('div', { class: 'hint',
         text: entry.files
           ? `${human(entry.bytes)} would be removed. Only .zip and .chd files are ever `
@@ -229,7 +229,7 @@ const INDENT = [10, 26, 50];
    it is -- disks for the weight, flagged files for a replace, origins for a move. */
 function detailOf(node, kind) {
   const parts = [`${count(node.machines)} ${kind === 'orphan' ? 'files' : node.machines === 1 ? 'game' : 'games'}`];
-  if (kind !== 'orphan' && node.files !== node.machines) parts.push(`${count(node.files)} files`);
+  if (kind !== 'orphan' && node.files !== node.machines) parts.push(`${plural(node.files, 'file', 'files')}`);
   if (node.disks) parts.push(`${count(node.disks)} with CHD`);
   if (node.flagged) parts.push(`${count(node.flagged)} flagged by the check`);
   if (kind === 'move' && node.moved) parts.push('renamed in place');
@@ -370,8 +370,8 @@ function goPanel(data) {
   const armed = deleting && V.armed === orphans.files;
   if (deleting) {
     go.textContent = armed
-      ? `Delete ${count(orphans.files)} files and start — sure?`
-      : `Delete ${count(orphans.files)} files and start`;
+      ? `Delete ${plural(orphans.files, 'file', 'files')} and start — sure?`
+      : `Delete ${plural(orphans.files, 'file', 'files')} and start`;
     go.classList.add('danger');
   }
   go.onclick = async () => {
@@ -408,7 +408,7 @@ function goPanel(data) {
     go,
     el('b', { text: `${data.to_transfer_human} to copy` }),
     moving.files
-      ? el('b', { text: `${count(moving.files)} files to move` })
+      ? el('b', { text: `${plural(moving.files, 'file', 'files')} to move` })
       : null,
     V.remove && data.delete_bytes
       ? el('b', { class: 'bad', text: `${data.delete_bytes_human} to delete` })
@@ -427,7 +427,7 @@ export function render() {
   const data = V.data;
   if (!data || !data.compared) {
     host.append(el('div', { class: 'empty' },
-      el('div', { class: 'big', text: '⇄' }),
+      el('div', { class: 'big' }, icon('transfer')),
       el('div', {
         text: V.busy
           ? 'Working out the difference…'
