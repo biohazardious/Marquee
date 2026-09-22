@@ -30,6 +30,17 @@ def is_managed(name):
     return name.lower().endswith(MANAGED_SUFFIXES)
 
 
+# What a transfer that was killed leaves behind: the partial copy of a ROM or a disk,
+# or the temporary link a hardlink goes through. Nothing else ever writes these
+# names, and nothing reads them -- they only take space, for ever.
+LEFTOVER_SUFFIXES = tuple(suffix + extra for suffix in MANAGED_SUFFIXES
+                          for extra in (".part", ".link"))
+
+
+def is_leftover(name):
+    return name.lower().endswith(LEFTOVER_SUFFIXES)
+
+
 class CopyBackend:
     """The interface `pipeline.execute` relies on.
 
@@ -72,8 +83,14 @@ class CopyBackend:
 
         This is what turns a blind copy into a sync: without it a run cannot tell a file
         that moved from one that is missing, nor spot what an older romset left behind.
+
+        Partial copies an interrupted run left (see `is_leftover`) are not in it; a
+        backend collects their relative paths in `self.leftovers` as it walks.
         """
         raise NotImplementedError
+
+    # Filled in by index(): see above.
+    leftovers = ()
 
     def move(self, from_relpath, to_relpath):
         """Relocate a file already at the destination. Far cheaper than re-copying."""

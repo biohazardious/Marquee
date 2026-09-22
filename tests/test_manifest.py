@@ -1,6 +1,8 @@
 """The record a destination keeps of itself."""
 import json
 
+import pytest
+
 from marquee import manifest, pipeline
 from marquee.config import Config
 
@@ -23,7 +25,8 @@ class TestReadWrite:
     def test_absent_destination_reads_as_nothing(self, tmp_path):
         assert manifest.read(str(tmp_path)) is None
 
-    def test_remote_destination_is_skipped(self):
+    def test_a_remote_destination_needs_a_connection_to_write(self):
+        manifest._REMOTE.clear()
         assert manifest.read("smb://nas/Share/roms") is None
         assert manifest.write("smb://nas/Share/roms", Config(), "0.289", Fake()) is None
 
@@ -185,3 +188,96 @@ class TestEveryRemoteSchemeIsRemote:
         from marquee import plan as planning
         assert planning.check_free_space(None, "ftp://nas/mame") is None
         assert Config(copy_path="sftp://nas/mame").is_remote is True
+
+
+class Share:
+    """A library on a share, as the manifest sees one: whole files by name."""
+
+    def __init__(self, files=None, broken=False):
+        self.files, self.broken, self.reads = dict(files or {}), broken, 0
+
+    def read_file(self, name):
+        self.reads += 1
+        if self.broken:
+            raise OSError("share went away")
+        body = self.files.get(name)
+        return None if body is None else body.encode()
+
+    def write_text(self, name, text):
+        self.files[name] = text
+
+    def index(self):
+        return {}
+
+    def close(self):
+        pass
+
+
+class TestALibraryOnAShare:
+    """A library on SMB, FTP or SFTP never had a record: the upgrade preview guessed
+    its release from the settings, and its filters could not be read back."""
+
+    URL = "smb://nas/Batocera/roms/mame"
+
+    @pytest.fixture(autouse=True)
+    def forget(self):
+        manifest._REMOTE.clear()
+        yield
+        manifest._REMOTE.clear()
+
+    def test_it_is_written_through_the_connection(self):
+        share = Share()
+        written = manifest.write(self.URL, Config(copy_path=self.URL), "0.289", Fake(),
+                                 backend=share)
+        assert written == manifest.NAME
+        import json
+        assert json.loads(share.files[manifest.NAME])["mame_version"] == "0.289"
+
+    def test_the_pages_read_it_from_memory(self):
+        share = Share()
+        manifest.write(self.URL, Config(copy_path=self.URL), "0.289", Fake(), backend=share)
+        before = share.reads
+        assert manifest.read(self.URL)["mame_version"] == "0.289"
+        assert share.reads == before, "no connection per poll"
+
+    def test_it_is_loaded_when_the_share_is_reached(self):
+        import json
+        share = Share({manifest.NAME: json.dumps(
+            {"format": manifest.FORMAT, "mame_version": "0.288", "history": [{}]})})
+        assert manifest.load(self.URL, share)["mame_version"] == "0.288"
+        assert manifest.read(self.URL)["mame_version"] == "0.288"
+
+    def test_the_history_carries_on(self):
+        import json
+        share = Share({manifest.NAME: json.dumps(
+            {"format": manifest.FORMAT, "mame_version": "0.288", "history": [{"to": "0.288"}]})})
+        previous = manifest.load(self.URL, share)
+        manifest.write(self.URL, Config(copy_path=self.URL), "0.289", Fake(),
+                       previous=previous, backend=share)
+        record = json.loads(share.files[manifest.NAME])
+        assert [entry["to"] for entry in record["history"]] == ["0.288", "0.289"]
+        assert record["history"][-1]["from"] == "0.288"
+
+    def test_the_old_name_is_still_read(self):
+        import json
+        share = Share({".mameparser.json": json.dumps(
+            {"format": manifest.FORMAT, "mame_version": "0.282"})})
+        assert manifest.load(self.URL, share)["mame_version"] == "0.282"
+
+    def test_a_share_that_will_not_answer_is_no_record_not_an_error(self):
+        assert manifest.load(self.URL, Share(broken=True)) is None
+
+    def test_a_plan_reads_it_while_indexing(self, monkeypatch):
+        import json
+        from marquee import backends
+        share = Share({manifest.NAME: json.dumps(
+            {"format": manifest.FORMAT, "mame_version": "0.288"})})
+        monkeypatch.setattr(backends, "for_destination", lambda *args, **kwargs: share)
+
+        class Plan:
+            items, absent_items = [], []
+
+            def files(self):
+                return iter(())
+        pipeline.compare_destination(Plan(), Config(copy_path=self.URL))
+        assert manifest.read(self.URL)["mame_version"] == "0.288"

@@ -13,7 +13,7 @@ from urllib.parse import unquote
 
 from ..errors import ConfigError
 from ..reporting import Reporter
-from . import BackendError, CopyBackend, is_managed, redact
+from . import BackendError, CopyBackend, is_leftover, is_managed, redact
 
 # ftp[s]://[user[:password]@]host[:port]/path
 CONN_STR_RE = re.compile(r'(ftps?)://(?:([^/]*)@)?([^/:]+)(?::(\d+))?(?:/(.*))?$')
@@ -173,6 +173,7 @@ class FtpCopy(CopyBackend):
 
     def index(self, on_progress=None):
         found = {}
+        self.leftovers = []
         self._walk(self.root, "", found, on_progress)
         return found
 
@@ -202,6 +203,9 @@ class FtpCopy(CopyBackend):
                 continue
             kind = facts.get("type")
             path = posixpath.join(directory, name)
+            if is_leftover(name) and kind in (None, "file"):
+                self.leftovers.append(prefix + name)
+                continue
             if kind is None and not is_managed(name) and self._is_dir(path):
                 kind = "dir"
             if kind == "dir":

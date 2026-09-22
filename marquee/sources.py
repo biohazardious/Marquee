@@ -565,6 +565,15 @@ def rom_manifests(xml_file, wanted=None, on_progress=None):
     return manifests
 
 
+def _digest(parts):
+    return hashlib.sha1(repr(sorted(set(parts))).encode()).hexdigest()[:16]
+
+
+# What a machine with no ROMs at all signs as. pong, breakout, rebound and pongd are
+# wired logic: MAME runs them with no zip, and no set carries one.
+EMPTY_SIGNATURE = _digest(())
+
+
 def _sign(machines):
     """Give every machine a digest of the bytes its non-merged zip would contain.
 
@@ -598,9 +607,7 @@ def _sign(machines):
     for machine in machines:
         name = machine["n"]
         if name not in cache:
-            digest = hashlib.sha1(
-                repr(sorted(set(content(name, set())))).encode()).hexdigest()
-            cache[name] = digest[:16]
+            cache[name] = _digest(content(name, set()))
         machine["sig"] = cache[name]
 
     for machine in machines:

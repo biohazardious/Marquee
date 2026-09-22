@@ -252,3 +252,30 @@ class TestPlanArithmetic:
         made = AcquisitionPlan(roms=Selection(missing=["ghost"]),
                                chds=Selection(missing=["g/d"]))
         assert made.missing == ["roms:ghost", "chds:g/d"]
+
+
+class TestAWindowsClient:
+    """qBittorrent on Windows names its folders D:\\Torrents\\...; only "/" was ever
+    looked for, so no mapping could match."""
+
+    def test_a_mapping_typed_for_it_is_used(self):
+        from marquee import acquisition
+        mapped = acquisition.remap(r"D:\Torrents\MAME 0.289 ROMs (non-merged)",
+                                   [(r"D:\Torrents", "/downloads")])
+        assert mapped == "/downloads/MAME 0.289 ROMs (non-merged)"
+
+    def test_case_and_slashes_do_not_matter_on_windows(self):
+        from marquee import acquisition
+        assert acquisition.remap(r"d:\torrents\MAME", [("D:/Torrents/", "/dl")]) == "/dl/MAME"
+
+    def test_found_by_name_under_the_download_folder(self, tmp_path):
+        from marquee import acquisition
+        (tmp_path / "MAME 0.289 ROMs (non-merged)").mkdir()
+        found = acquisition.locate(r"D:\Torrents\MAME 0.289 ROMs (non-merged)",
+                                   download_dir=str(tmp_path))
+        assert found == str(tmp_path / "MAME 0.289 ROMs (non-merged)")
+
+    def test_unix_paths_are_unchanged(self):
+        from marquee import acquisition
+        assert acquisition.remap("/data/torrents/MAME", [("/data/torrents", "/dl")]) == "/dl/MAME"
+        assert acquisition.remap("/Data/MAME", [("/data", "/dl")]) == "/Data/MAME"

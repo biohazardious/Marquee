@@ -448,6 +448,12 @@ table.grid tbody tr.apart td { border-top: 1px solid var(--line); }
   .search { min-width: 0; }
   /* Its own row: sharing one with two selects leaves it too narrow to type in. */
   .toolbar .search { flex: 1 1 100%; }
+  /* Wide tables scroll inside their panel rather than pushing the page sideways:
+     the downloads table alone has seven columns, most of them nowrap. */
+  table.grid { display: block; overflow-x: auto; }
+  /* A panel heading with a search box, a view switch and a Close button wraps. */
+  .panel > h2 { flex-wrap: wrap; row-gap: 8px; }
+  .panel > h2 .search { flex: 1 1 100%; order: 10; }
   .topbar { padding: 10px 14px; gap: 8px; }
   .statusbar { padding: 6px 14px; gap: 10px; flex-wrap: wrap; }
   .status-client { margin-left: 0; }
@@ -462,7 +468,10 @@ table.grid tbody tr.apart td { border-top: 1px solid var(--line); }
 @media (min-width: 901px) { .menu-btn { display: none; } }
 
 /* Keyboard focus on things that are not buttons but act like them. */
-[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+[role="button"]:focus-visible, [role="checkbox"]:focus-visible, [role="link"]:focus-visible,
+[tabindex="0"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The search box's own input has no outline, so the box shows where focus is. */
+.search:focus-within { border-color: var(--accent-dk); }
 .loading { opacity: .6; transition: opacity .15s; }
 
 

@@ -431,7 +431,17 @@ function onState(data) {
   // The diff is worked out when a plan is built and taken again when the library is
   // checked, so the page that shows it has to come back for it when either finishes.
   if (page === 'changes' && lastState !== data.state) changes.load();
+  // What the library holds changes when a transfer, a check or a plan finishes, and
+  // the Library page read it once: it went on showing the old picture until reopened.
+  if (page === 'library' && ['planning', 'copying', 'checking'].includes(lastState) && !busy) {
+    library.load();
+  }
   lastState = data.state;
+  // In the tab's title too: a transfer runs for hours, and the tab strip is where it
+  // is glanced at from.
+  document.title = busy && data.progress
+    ? `(${data.progress.percent}%) ${data.progress.stage} — ${BASE_TITLE}`
+    : BASE_TITLE;
   // Drawn once on navigation, before the first poll has landed -- so it has to be
   // drawn again when the numbers it reports turn up.
   if (page === 'system') renderSystem();
@@ -441,6 +451,15 @@ function onState(data) {
 let settingsAdopted = false;
 let hadPlan = false;
 let lastState = '';
+const BASE_TITLE = document.title || 'Marquee';
+
+/* A selection ticked and not saved is lost with the tab. Ask first, the way any
+   editor does. */
+window.addEventListener('beforeunload', (event) => {
+  if (!selectionUnsaved()) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
 
 /* ---------------- the status bar ---------------- */
 

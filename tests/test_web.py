@@ -2405,3 +2405,79 @@ class TestOneDownloadClientPerAddress:
         monkeypatch.setattr(app, "client", lambda overrides=None: Probe())
         app.queue_payload()
         assert asked == ["marquee"]
+
+
+class TestStopping:
+    """SIGTERM from `docker stop` used to be dropped (the server is PID 1) and the
+    container was killed ten seconds later, mid-file."""
+
+    class Job:
+        def __init__(self, stops_after):
+            self.stops_after, self.cancelled = stops_after, None
+
+        def cancel(self):
+            self.cancelled = time.monotonic()
+            return True
+
+        @property
+        def busy(self):
+            return self.cancelled is None or time.monotonic() - self.cancelled < self.stops_after
+
+    def app(self, stops_after):
+        return type("App", (), {"job": self.Job(stops_after)})()
+
+    def test_a_transfer_is_told_to_stop_and_waited_for(self):
+        from marquee.web import server as web_server
+        app = self.app(0.2)
+        assert web_server.shutdown(app, grace=2) is True
+        assert app.job.cancelled is not None
+
+    def test_the_wait_has_an_end(self):
+        from marquee.web import server as web_server
+        started = time.monotonic()
+        assert web_server.shutdown(self.app(60), grace=0.3) is False
+        assert time.monotonic() - started < 2
+
+    def test_sigterm_is_turned_into_a_stop(self):
+        from marquee.web import server as web_server
+        with pytest.raises(KeyboardInterrupt):
+            web_server._terminate(15, None)
+
+
+class TestAStartedTask:
+    """One wrapper for every background task: whatever the work raises is shown, and
+    the task is never left looking busy."""
+
+    def wait(self, task):
+        for _ in range(200):
+            if not task["running"]:
+                return
+            time.sleep(0.01)
+        raise AssertionError("still running")
+
+    def test_an_unexpected_error_is_recorded(self, server):
+        _base, app = server
+        task, finished = {"running": False, "error": None}, []
+
+        def work():
+            raise ValueError("too many values to unpack")
+        assert app._start(task, work, finish=lambda: finished.append(True)) is True
+        self.wait(task)
+        assert task["error"] == "ValueError: too many values to unpack"
+        assert finished == [True]
+
+    def test_our_own_errors_read_as_written(self, server):
+        from marquee.errors import MarqueeError
+        _base, app = server
+        task = {"running": False, "error": None}
+
+        def work():
+            raise MarqueeError("No download client is configured.")
+        app._start(task, work)
+        self.wait(task)
+        assert task["error"] == "No download client is configured."
+
+    def test_a_running_task_is_not_started_twice(self, server):
+        _base, app = server
+        task = {"running": True}
+        assert app._start(task, lambda: None) is False

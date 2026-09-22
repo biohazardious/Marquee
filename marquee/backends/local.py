@@ -4,7 +4,7 @@ import shutil
 import time
 
 from ..reporting import Reporter
-from . import CopyBackend, is_managed
+from . import CopyBackend, is_leftover, is_managed
 
 CHUNK_SIZE = 8 * 1024 * 1024
 # Below this, shutil's own fast path is worth more than progress reporting.
@@ -204,12 +204,16 @@ class LocalCopy(CopyBackend):
     def index(self, on_progress=None):
         root = self.copy_path.rstrip(os.sep)
         found = {}
+        self.leftovers = []
         if not os.path.isdir(root):
             return found
         for current, _dirs, names in os.walk(root):
             relative = os.path.relpath(current, root)
             prefix = "" if relative == "." else relative.replace(os.sep, "/") + "/"
             for name in names:
+                if is_leftover(name):
+                    self.leftovers.append(prefix + name)
+                    continue
                 # A half-written chunked copy is not a real destination file, and only
                 # ROMs and disks are ours to account for.
                 if not is_managed(name):

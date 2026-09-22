@@ -31,6 +31,24 @@ export function append(node, ...children) {
   return node;
 }
 
+/* A remembered preference, or `fallback`. Storage can be switched off or full, and
+   then even reading it throws -- at module load, which left the whole page blank. */
+export function stored(key, fallback) {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function store(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* not remembered, and nothing else lost */
+  }
+}
+
 export function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
 export function human(bytes) {

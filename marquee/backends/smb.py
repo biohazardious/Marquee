@@ -3,13 +3,14 @@ import os
 import posixpath
 import re
 import socket
+from urllib.parse import unquote
 
 from smb import smb_structs
 from smb.base import NotConnectedError, SMBTimeout
 from smb.SMBConnection import SMBConnection
 
 from ..reporting import Reporter
-from . import BackendError, CopyBackend, is_managed
+from . import BackendError, CopyBackend, is_leftover, is_managed
 
 # smb://[user[:password]@]host[:port]/share[/path...]
 # The old pattern only accepted IPv4 literals and \w share paths, so hostnames,
@@ -176,7 +177,11 @@ class RemoteCopy(CopyBackend):
             raise ValueError('Invalid connection string')
 
         userinfo = match.group(1) or ''
-        self.username, _, self.password = userinfo.partition(':')
+        username, _, password = userinfo.partition(':')
+        # Percent-decoded, as the FTP and SFTP backends already do: otherwise a '/'
+        # in a password cannot be written into the URL at all. unquote leaves a '%'
+        # that is not followed by two hex digits alone.
+        self.username, self.password = unquote(username), unquote(password)
         self.server = match.group(2)
         self.port = int(match.group(3)) if match.group(3) else None
 
@@ -390,6 +395,7 @@ class RemoteCopy(CopyBackend):
     def index(self, on_progress=None):
         """Walk the share below remote_path. One listPath per directory, not per file."""
         found = {}
+        self.leftovers = []
         pending = [self.remote_path.strip("/")]
         while pending:
             current = pending.pop()
@@ -412,6 +418,9 @@ class RemoteCopy(CopyBackend):
                 child = posixpath.join(current, entry.filename) if current else entry.filename
                 if entry.isDirectory:
                     pending.append(child)
+                elif is_leftover(entry.filename):
+                    self.leftovers.append(
+                        posixpath.relpath(child, self.remote_path.strip("/") or "."))
                 elif is_managed(entry.filename):
                     relative = posixpath.relpath(child, self.remote_path.strip("/") or ".")
                     found[relative] = entry.file_size

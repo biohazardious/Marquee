@@ -25,6 +25,13 @@ MAX_HISTORY = 20
 SETTING_KEYS = ("allow_mature", "mature_rom_folder", "blacklist_genres",
                 "blacklist_categories", "blacklist_roms")
 
+# Records of libraries on a share, by destination, as last read or written through a
+# connection that was open anyway -- indexing for a plan, or at the end of a transfer.
+# The pages ask on every poll, and a connection to the console per poll is not on.
+# Without this a library on SMB never had a record at all: the upgrade preview
+# guessed its release from the settings, and a reinstall could not read its filters.
+_REMOTE = {}
+
 
 def path_for(copy_path):
     return os.path.join(copy_path, NAME)
@@ -35,10 +42,22 @@ def candidates(copy_path):
     return [os.path.join(copy_path, name) for name in (NAME,) + LEGACY_NAMES]
 
 
-def read(copy_path):
-    """The destination's own record, or None when there is none to read."""
-    if not copy_path or backends.is_remote(copy_path):
+def _valid(data):
+    if not isinstance(data, dict) or data.get("format") != FORMAT:
         return None
+    return data
+
+
+def read(copy_path):
+    """The destination's own record, or None when there is none to read.
+
+    For a library on a share, the one last seen through `load` or `write`: nothing
+    here opens a connection.
+    """
+    if not copy_path:
+        return None
+    if backends.is_remote(copy_path):
+        return _REMOTE.get(copy_path)
     data = None
     for candidate in candidates(copy_path):
         try:
@@ -50,9 +69,32 @@ def read(copy_path):
             continue
     if data is None:
         return None
-    if not isinstance(data, dict) or data.get("format") != FORMAT:
-        return None
-    return data
+    return _valid(data)
+
+
+def load(copy_path, backend):
+    """Read a shared library's record through a backend already connected to it.
+
+    Never fatal: a record that cannot be read is a record that is not there, and a
+    plan is not the place to fail over it.
+    """
+    if not copy_path or not backends.is_remote(copy_path):
+        return read(copy_path)
+    record = None
+    for name in (NAME,) + LEGACY_NAMES:
+        try:
+            body = backend.read_file(name)
+        except Exception:  # noqa: BLE001 - see above
+            continue
+        if body is None:
+            continue
+        try:
+            record = _valid(json.loads(body))
+        except ValueError:
+            record = None
+        break
+    _REMOTE[copy_path] = record
+    return record
 
 
 def settings_from(record):
@@ -78,10 +120,15 @@ def describe(record):
     }
 
 
-def write(copy_path, config, mame_version, summary, previous=None):
+def write(copy_path, config, mame_version, summary, previous=None, backend=None):
     """Record what this destination now holds. Never fatal: a read-only destination
-    should not fail a sync that otherwise worked."""
-    if not copy_path or backends.is_remote(copy_path):
+    should not fail a sync that otherwise worked.
+
+    A library on a share is written through `backend`, the connection the transfer
+    used; without one there is nothing to write it with.
+    """
+    remote = backends.is_remote(copy_path)
+    if not copy_path or (remote and backend is None):
         return None
 
     record = previous or read(copy_path) or {}
@@ -111,6 +158,14 @@ def write(copy_path, config, mame_version, summary, previous=None):
                   "bytes": summary.destination_bytes},
         "history": history[-MAX_HISTORY:],
     }
+
+    if remote:
+        try:
+            backend.write_text(NAME, json.dumps(document, indent=2) + "\n")
+        except Exception:  # noqa: BLE001 - never fatal, as above
+            return None
+        _REMOTE[copy_path] = document
+        return NAME
 
     target = path_for(copy_path)
     try:

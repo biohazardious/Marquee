@@ -113,6 +113,12 @@ class PlannedItem:
     def total_bytes(self):
         return self.rom_bytes + self.chd_bytes
 
+    @property
+    def romless(self):
+        """No ROMs at all: MAME runs it without a zip, and no set has one to fetch."""
+        from .sources import EMPTY_SIGNATURE
+        return bool(self.signature) and self.signature == EMPTY_SIGNATURE
+
     def wanted_paths(self):
         """Where this machine's files belong, whether or not they are here yet.
 
@@ -129,6 +135,9 @@ class PlannedItem:
     def rom_to_fetch(self):
         """Whether the zip has to come from a download: not in the source folder, and
         -- once the library has been looked at -- not there either."""
+        if self.romless:
+            # pong, breakout, rebound, pongd: on the Wanted page for ever otherwise.
+            return False
         if self.compared:
             return f"{self.folder}/{self.name}.zip" in self.unsettled
         return self.rom_source is None

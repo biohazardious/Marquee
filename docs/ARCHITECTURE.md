@@ -329,7 +329,7 @@ All of it except the database, which nothing has needed yet -- see
 | One game one ROM | `catalog.collapse_clones` — 80 GB on the real set |
 | Destinations | `backends/` — local (hardlink), SMB, FTP, SFTP |
 | Console files | `gamelist.py`, `art.py` |
-| Web | `web/application.py` (what it can do), `web/server.py` (how HTTP reaches it) |
+| Web | `web/application.py` (what it can do, assembled from `settings.py`, `downloads.py`, `releases.py` and `tasks.py`), `web/job.py` (the one background job), `web/views.py` (the plan as the pages read it), `web/server.py` (how HTTP reaches it) |
 
 ---
 

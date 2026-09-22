@@ -8,6 +8,8 @@ import hmac
 import json
 import os
 import secrets
+import signal
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
@@ -17,7 +19,7 @@ from .. import art
 from .. import config as configuration
 from ..errors import MarqueeError
 from .application import Application
-from .job import (changes_payload, left_out_payload, machine_detail, machine_keys,
+from .views import (changes_payload, left_out_payload, machine_detail, machine_keys,
                   machine_rows)
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -448,6 +450,29 @@ def api_key(settings_path):
     return token
 
 
+# How long a stop waits for a running transfer to reach the end of its current file.
+# Docker sends SIGKILL ten seconds after SIGTERM unless told otherwise.
+STOP_GRACE = 8
+
+
+def shutdown(app, grace=STOP_GRACE):
+    """Ask a running transfer or check to stop, and give it `grace` seconds to.
+
+    It stops between files, writes the destination's record as a stopped run, and
+    whatever was mid-copy stays a .part that the next transfer clears away.
+    Returns whether the job had come to rest.
+    """
+    app.job.cancel()
+    deadline = time.monotonic() + grace
+    while app.job.busy and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return not app.job.busy
+
+
+def _terminate(_signum, _frame):
+    raise KeyboardInterrupt
+
+
 def serve(settings_path, host="127.0.0.1", port=8777, open_browser=False):
     """Run until interrupted. Returns nothing; prints where to point a browser."""
     token = None if host in LOOPBACK else api_key(settings_path)
@@ -477,9 +502,20 @@ def serve(settings_path, host="127.0.0.1", port=8777, open_browser=False):
         import webbrowser
         webbrowser.open(url)
 
+    # `docker stop` sends SIGTERM, and the process is PID 1 in the container, where
+    # the kernel drops a signal nobody handles: the stop sat out Docker's ten seconds
+    # and ended in SIGKILL, mid-file, with no record of the run written.
+    try:
+        signal.signal(signal.SIGTERM, _terminate)
+    except ValueError:
+        pass                      # not the main thread; nothing to install into
+
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nStopping.")
     finally:
+        if app.job.busy and not shutdown(app):
+            print("The transfer had not reached the end of its file; the next one "
+                  "carries on from there.")
         httpd.server_close()

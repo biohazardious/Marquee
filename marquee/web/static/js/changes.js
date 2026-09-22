@@ -7,7 +7,7 @@
    deleted and what they were. */
 
 import { icon } from './icons.js';
-import { $, append, clear, count, el, human, pressable } from './util.js';
+import { $, append, clear, count, el, human, pressable, store, stored } from './util.js';
 import { api, lock, post, state } from './api.js';
 
 const V = {
@@ -15,7 +15,7 @@ const V = {
   // How the rows of a kind are shown: one list, or the Selection page's tree of
   // genre -> category -> game. Remembered, because it is a way of reading, not a
   // one-off choice.
-  view: localStorage.getItem('marquee.changes.view') || 'list',
+  view: stored('marquee.changes.view', 'list'),
   open: new Set(), branches: {}, loading: new Set(),
   // Deleting is never the default, and never carried over from a run.
   remove: false,
@@ -55,7 +55,7 @@ export async function load(kind) {
 
 function setView(view) {
   V.view = view;
-  localStorage.setItem('marquee.changes.view', view);
+  store('marquee.changes.view', view);
   V.offset = 0;
   load();
 }

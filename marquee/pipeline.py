@@ -339,6 +339,9 @@ def build_plan(config, options=None, reporter=None):
 
     if options.compare_destination:
         built.sync = compare_destination(built, config, reporter)
+        if backends.is_remote(config.copy_path):
+            # Only known now that the share has been reached.
+            resolution.destination = manifest.describe(manifest.read(config.copy_path))
     else:
         # Declined, not deferred. `execute` used to compare anyway, so --no-compare
         # changed what the dry run printed and nothing else.
@@ -391,16 +394,22 @@ def compare_destination(built, config, reporter=None):
         backend = backends.for_destination(config.copy_path, reporter=reporter,
                                            hardlink=config.hardlink)
         existing = backend.index()
+        leftovers = list(getattr(backend, "leftovers", ()) or ())
+        # The record of a library on a share is read here, on a connection that is
+        # open anyway; the pages read it from memory after this.
+        manifest.load(config.copy_path, backend)
     except Exception as error:  # noqa: BLE001 - a destination that cannot be read is
         # not fatal; the run simply cannot tell moves from new files.
         reporter.warn(f"Could not read the destination ({error}); "
                       f"treating everything as new.")
         existing = {}
+        leftovers = []
     finally:
         if backend is not None:
             backend.close()
 
     report = sync.compare(built, existing)
+    report.leftovers = leftovers
     reporter.info(
         f"{report.counts[sync.KEEP]} already there, {report.counts[sync.NEW]} new, "
         f"{report.counts[sync.UPDATE]} changed, {report.counts[sync.MOVE]} moved, "
@@ -445,6 +454,19 @@ def _execute(built, config, reporter, backend, should_continue, delete_orphans,
                       skipped=report.counts.get(sync.KEEP, 0))
     total_bytes = report.to_transfer
     state = {"bytes": 0, "name": ""}
+
+    # Half-written copies an earlier run left when it was killed. Nothing reads them
+    # and nothing else writes these names; left alone they only ever took space.
+    cleared = 0
+    for relpath in getattr(report, "leftovers", None) or ():
+        try:
+            backend.delete(relpath)
+            cleared += 1
+        except (OSError, MarqueeError) as error:
+            reporter.warn(f"Could not remove the partial copy {relpath}: {error}")
+    if cleared:
+        reporter.info(f"Removed {cleared} partial cop{'y' if cleared == 1 else 'ies'} "
+                      f"an interrupted run left behind.")
 
     def moved_bytes(count):
         # Progress is counted in bytes, not files: one 11 GB CHD would otherwise leave
@@ -536,7 +558,10 @@ def _execute(built, config, reporter, backend, should_continue, delete_orphans,
     summary.destination_bytes = report.at_destination
     summary.seconds = time.perf_counter() - started
 
-    written = manifest.write(config.copy_path, config, mame_version, summary)
+    previous = (manifest.load(config.copy_path, backend)
+                if backends.is_remote(config.copy_path) else None)
+    written = manifest.write(config.copy_path, config, mame_version, summary,
+                             previous=previous, backend=backend)
     if written:
         reporter.info(f"Recorded what this destination now holds in {manifest.NAME}.")
     return summary

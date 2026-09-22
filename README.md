@@ -612,7 +612,8 @@ marquee/
     reporting.py   Reporter protocol: terminal, collecting, silent
     errors.py      MarqueeError and its subclasses
     cli.py         flags, prompts, printing, exit codes
-    web/           server.py, job.py and a single-page front end
+    web/           server.py, application.py (+ settings, downloads, releases, tasks),
+                   job.py, views.py and a single-page front end
 ```
 
 Nothing below `cli.py` prints, prompts or calls `sys.exit`; it reports through a

@@ -679,3 +679,76 @@ class TestWhatTheCheckFoundWrongIsStillWanted:
         assert item.rom_to_fetch is True
         assert item.disks_to_fetch == ["gdisk"]
 
+
+
+class TestWhatAKilledRunLeftBehind:
+    """A transfer killed mid-file leaves `galaga.zip.part`. The index never counted
+    it as a ROM, so nothing ever removed it either."""
+
+    def test_the_index_finds_them_and_the_transfer_removes_them(
+            self, categorised, config, romset):
+        from marquee.backends.local import LocalCopy
+        out = romset["out_dir"]
+        (out / "Maze").mkdir(parents=True, exist_ok=True)
+        (out / "Maze" / "galaga.zip.part").write_bytes(b"half")
+        (out / "Maze" / "area51.chd.link").write_bytes(b"")
+        (out / "Maze" / "notes.txt.part").write_bytes(b"not ours")
+        backend = LocalCopy(str(out))
+        assert "Maze/galaga.zip.part" not in backend.index()
+        assert sorted(backend.leftovers) == ["Maze/area51.chd.link", "Maze/galaga.zip.part"]
+
+        built = planning.build(categorised, str(romset["rom_dir"]), str(romset["chd_dir"]),
+                               catalog.folder_namer(config), config.allow_mature)
+        built.sync = pipeline.compare_destination(built, config)
+        assert "Maze/galaga.zip.part" in built.sync.leftovers
+        pipeline.execute(built, config)
+        assert not (out / "Maze" / "galaga.zip.part").exists()
+        assert not (out / "Maze" / "area51.chd.link").exists()
+        assert (out / "Maze" / "notes.txt.part").exists(), "only ours"
+
+    def test_a_plan_removes_nothing(self, categorised, config, romset):
+        out = romset["out_dir"]
+        (out / "Maze").mkdir(parents=True, exist_ok=True)
+        (out / "Maze" / "galaga.zip.part").write_bytes(b"half")
+        built = planning.build(categorised, str(romset["rom_dir"]), str(romset["chd_dir"]),
+                               catalog.folder_namer(config), config.allow_mature)
+        pipeline.compare_destination(built, config)
+        assert (out / "Maze" / "galaga.zip.part").exists()
+
+
+class TestAMachineWithNoRoms:
+    """pong, breakout, rebound and pongd have no ROMs: MAME runs them without a zip
+    and no set carries one. They sat on the Wanted page for ever."""
+
+    def item(self):
+        from marquee.plan import PlannedItem
+        from marquee.sources import EMPTY_SIGNATURE
+        return PlannedItem(name="pong", description="Pong (Rev E)", folder="Ball",
+                           category="Ball", genre="Ball", signature=EMPTY_SIGNATURE)
+
+    def test_the_empty_signature_is_the_one_the_cache_holds(self):
+        # What 0.289's parse cache holds for all four of them.
+        from marquee.sources import EMPTY_SIGNATURE
+        assert EMPTY_SIGNATURE == "97d170e1550eee4a"
+
+    def test_it_is_never_something_to_fetch(self):
+        item = self.item()
+        assert item.romless and item.rom_to_fetch is False
+
+    def test_it_is_settled_once_compared(self):
+        item = self.item()
+
+        class Plan:
+            items = []
+            absent_items = [item]
+
+            def files(self):
+                return iter(())
+        sync.compare(Plan(), {})
+        assert item.settled and item.rom_to_fetch is False
+
+    def test_a_machine_with_roms_is_not_romless(self):
+        from marquee.plan import PlannedItem
+        assert not PlannedItem(name="g", description="", folder="x", category="x",
+                               signature="7534dc0210792e5b").romless
+        assert not PlannedItem(name="g", description="", folder="x", category="x").romless

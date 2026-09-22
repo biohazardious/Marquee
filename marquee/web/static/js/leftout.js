@@ -8,10 +8,10 @@
    search and no tree. */
 
 import { icon } from './icons.js';
-import { $, append, badges, clear, count, debounce, el, human } from './util.js';
+import { $, append, badges, clear, count, debounce, el } from './util.js';
+import { INDENT, branchRow, keepingFocus } from './tree.js';
 import { api, machines as fetchMachines, post, refresh } from './api.js';
 
-const INDENT = [10, 26, 42, 58];
 const ROWS = 500;
 
 /* Short enough to sit in a badge. The System page spells them out in full. */
@@ -69,32 +69,10 @@ export async function load() {
   render();
 }
 
-const wantedOf = (cat) => cat.wanted ?? cat.machines ?? 0;
-const weightOf = (cat) => cat.wanted_bytes ?? cat.bytes ?? 0;
 
 function catsOf(genre, mature) {
   return V.cats.filter((cat) => cat.genre === genre
     && Boolean(cat.mature) === Boolean(mature));
-}
-
-function totals(cats) {
-  return cats.reduce((sum, cat) => ({
-    wanted: sum.wanted + wantedOf(cat),
-    bytes: sum.bytes + weightOf(cat),
-  }), { wanted: 0, bytes: 0 });
-}
-
-function branchRow({ depth, label, open, onOpen, cats }) {
-  const sum = totals(cats);
-  return el('div', {
-    class: `row ${depth === 0 ? 'genre' : 'cat'}`,
-    style: `padding-left:${INDENT[depth]}px`,
-    onclick: onOpen,
-  },
-    el('span', { class: 'twist', text: open ? '▾' : '▸' }),
-    el('span', { class: 'name', text: label }),
-    el('span', { class: 'count', text: count(sum.wanted) }),
-    el('span', { class: 'size', text: human(sum.bytes) }));
 }
 
 function putBack(names, label) {
@@ -173,6 +151,7 @@ function categoryRows(cat, depth) {
   };
   const rows = [branchRow({
     depth, label: cat.label || cat.name, open, onOpen: swap, cats: [cat],
+    id: `cat:${cat.name}`,
   })];
   if (!open) return rows;
   if (!V.rows[cat.name] && !V.loading.has(cat.name)) {
@@ -214,7 +193,8 @@ function groupRows(genre, mature, depth) {
   const key = `${mature ? '18+' : ''}${genre}`;
   const open = V.open.has(key);
   const swap = () => { open ? V.open.delete(key) : V.open.add(key); render(); };
-  const rows = [branchRow({ depth, label: genre, open, onOpen: swap, cats })];
+  const rows = [branchRow({ depth, label: genre, open, onOpen: swap, cats,
+                            id: `genre:${key}` })];
   if (open) cats.forEach((cat) => rows.push(...categoryRows(cat, depth + 1)));
   return rows;
 }
@@ -236,7 +216,7 @@ function treeNodes() {
     render();
   };
   const rows = [branchRow({
-    depth: 0, label: V.adultFolder, open, onOpen: swap, cats: adult,
+    depth: 0, label: V.adultFolder, open, onOpen: swap, cats: adult, id: 'adult',
   })];
   if (open) {
     V.genres.map((genre) => genre.name)
@@ -333,7 +313,10 @@ function clearFilters() {
 export function render() {
   const host = $('leftOutBody');
   if (!host) return;
+  keepingFocus(host, () => draw(host));
+}
 
+function draw(host) {
   // Nothing to filter: no plan yet, or a plan that left nothing out at all.
   if (!V.loaded || !V.everything) {
     BAR.root = null;

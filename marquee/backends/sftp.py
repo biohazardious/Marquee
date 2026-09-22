@@ -12,7 +12,7 @@ from urllib.parse import unquote
 
 from ..errors import ConfigError
 from ..reporting import Reporter
-from . import BackendError, CopyBackend, is_managed, redact
+from . import BackendError, CopyBackend, is_leftover, is_managed, redact
 
 # sftp|ssh://[user[:password]@]host[:port]/path
 CONN_STR_RE = re.compile(r'(?:sftp|ssh)://(?:([^/]*)@)?([^/:]+)(?::(\d+))?(?:/(.*))?$')
@@ -172,6 +172,7 @@ class SftpCopy(CopyBackend):
 
     def index(self, on_progress=None):
         found = {}
+        self.leftovers = []
         self._walk(self.root, "", found, on_progress)
         return found
 
@@ -188,6 +189,8 @@ class SftpCopy(CopyBackend):
             path = posixpath.join(directory, entry.filename)
             if stat_module.S_ISDIR(entry.st_mode):
                 self._walk(path, f"{prefix}{entry.filename}/", found, on_progress)
+            elif is_leftover(entry.filename):
+                self.leftovers.append(prefix + entry.filename)
             elif is_managed(entry.filename):
                 found[prefix + entry.filename] = entry.st_size
         if on_progress:

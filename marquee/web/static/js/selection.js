@@ -5,7 +5,8 @@
    has to leave its siblings off -- so they live in their own block and are exercised
    by tests/test_selection_logic.py under node. */
 
-import { $, append, badges, banner, clear, count, el, human, pressable } from './util.js';
+import { $, append, badges, banner, clear, count, el } from './util.js';
+import { INDENT, branchRow, keepingFocus, tickBox, wantedOf, weightOf } from './tree.js';
 import { api, machines as fetchMachines } from './api.js';
 import { open as openGame } from './library.js';
 
@@ -386,28 +387,6 @@ async function applyToAll(wanted, button) {
    the adult folder holding the same genres and categories underneath it. That is
    where those games are actually filed, and showing them mixed into the ordinary
    genres meant the page and the folder tree disagreed. */
-const INDENT = [10, 26, 42, 58];
-
-function totals(cats) {
-  return cats.reduce((sum, cat) => ({
-    wanted: sum.wanted + wantedOf(cat),
-    bytes: sum.bytes + weightOf(cat),
-  }), { wanted: 0, bytes: 0 });
-}
-
-function branchRow({ depth, label, state, onTick, open, onOpen, cats }) {
-  const sum = totals(cats);
-  const kind = depth === 0 ? 'genre' : 'cat';
-  return el('div', {
-    class: `row ${kind} ${state === 'out' ? 'out' : ''}`,
-    style: `padding-left:${INDENT[depth]}px`,
-  },
-    el('span', { class: 'twist', text: open ? '▾' : '▸', onclick: onOpen }),
-    pressable(el('span', { class: 'tick', onclick: onTick }, box(state)), onTick),
-    pressable(el('span', { class: 'name', text: label, onclick: onOpen }), onOpen),
-    el('span', { class: 'count', text: count(sum.wanted) }),
-    el('span', { class: 'size', text: human(sum.bytes) }));
-}
 
 function categoryRows(cat, depth) {
   const open = S.openCats.has(cat.name);
@@ -418,7 +397,7 @@ function categoryRows(cat, depth) {
   };
   const rows = [branchRow({
     depth, label: cat.label || cat.name, state: catState(cat),
-    onTick: () => tickCat(cat), open, onOpen: swap, cats: [cat],
+    onTick: () => tickCat(cat), open, onOpen: swap, cats: [cat], id: `cat:${cat.name}`,
   })];
   if (!open) return rows;
   if (S.loading.has(cat.name)) {
@@ -448,7 +427,7 @@ function groupRows(group, depth, label) {
   const swap = () => { open ? S.open.delete(key) : S.open.add(key); render(); };
   const rows = [branchRow({
     depth, label: label || group.genre, state: groupState(group),
-    onTick: () => tickGroup(group), open, onOpen: swap, cats,
+    onTick: () => tickGroup(group), open, onOpen: swap, cats, id: `genre:${key}`,
   })];
   if (open) cats.forEach((cat) => rows.push(...categoryRows(cat, depth + 1)));
   return rows;
@@ -471,7 +450,7 @@ function treeNodes() {
   };
   const rows = [branchRow({
     depth: 0, label: S.adultFolder, state: sideState(true),
-    onTick: () => tickSide(true), open, onOpen: swap, cats: adult,
+    onTick: () => tickSide(true), open, onOpen: swap, cats: adult, id: 'adult',
   })];
   if (open) {
     S.genres.map((genre) => genre.name)
@@ -480,10 +459,6 @@ function treeNodes() {
   }
   nodes.push(rows);
   return nodes;
-}
-
-function box(state) {
-  return el('span', { class: `box ${state}`, text: state === 'out' ? '' : state === 'some' ? '–' : '✓' });
 }
 
 function gameRow(m, flat = false, depth = 2) {
@@ -496,11 +471,14 @@ function gameRow(m, flat = false, depth = 2) {
     style: flat ? null : `padding-left:${INDENT[Math.min(depth, 3)]}px`,
   },
     el('span', { class: 'twist' }),
-    pressable(el('span', { class: 'tick', title: out ? 'Put it back' : 'Leave it out',
-                           onclick: () => tickMachine(m) }, box(out ? 'out' : 'in')),
-              () => tickMachine(m)),
-    el('span', { class: 'name link', title: 'Details',
-                 onclick: () => openGame(m.name) },
+    tickBox(out ? 'out' : 'in', `${m.description}: ${out ? 'left out' : 'in the library'}`,
+      () => tickMachine(m), `tick:game:${m.name}`),
+    el('span', { class: 'name link', title: 'Details', role: 'link', tabindex: '0',
+                 'aria-label': `Details of ${m.description}`,
+                 onclick: () => openGame(m.name),
+                 onkeydown: (event) => {
+                   if (event.key === 'Enter') { event.preventDefault(); openGame(m.name); }
+                 } },
       el('span', { text: m.description }),
       el('small', { text: m.name })),
     el('span', { class: 'rowflex' }, badges(m)),
@@ -569,6 +547,10 @@ function nothingMatched() {
 export function render() {
   const host = $('tree');
   if (!host) return;
+  keepingFocus(host, () => draw(host));
+}
+
+function draw(host) {
   clear(host);
 
   if (S.busy && !S.hits) {
@@ -601,8 +583,6 @@ export function render() {
    left out -- not by adding up the rows that happen to be loaded. Only 500 rows of a
    965-game category are ever fetched, so counting those was short by 465 games every
    time one was expanded. */
-const wantedOf = (cat) => cat.wanted ?? cat.machines ?? 0;
-const weightOf = (cat) => cat.wanted_bytes ?? cat.bytes ?? 0;
 
 export function estimate() {
   let games = 0, bytes = 0;

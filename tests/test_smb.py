@@ -451,3 +451,12 @@ class TestALostSession:
         copier.close()
         assert conn.closed and copier.conn is None
         copier.close()                # twice is harmless
+
+
+class TestAPercentEncodedPassword:
+    def test_it_is_decoded_like_ftp_and_sftp(self):
+        copier = build("smb://bob:pa%2Fss%40w@nas/Share/roms", FakeConnection())
+        assert (copier.username, copier.password, copier.server) == ("bob", "pa/ss@w", "nas")
+
+    def test_a_percent_that_is_not_an_escape_is_left_alone(self):
+        assert build("smb://bob:100%sure@nas/Share/x", FakeConnection()).password == "100%sure"

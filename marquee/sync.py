@@ -38,6 +38,9 @@ class SyncReport:
     actions: list = field(default_factory=list)
     counts: dict = field(default_factory=dict)
     bytes: dict = field(default_factory=dict)
+    # Partial copies a killed run left at the destination; the next transfer removes
+    # them. Found by the index, never by the plan's own reckoning.
+    leftovers: list = field(default_factory=list)
 
     def of(self, kind):
         return [action for action in self.actions if action.kind == kind]
@@ -229,6 +232,11 @@ def compare(plan, existing):
         # for the right bytes, and "Check the library" found problems nothing fixed.
         refetch = set()
         for relpath in paths:
+            if getattr(item, "romless", False) and relpath == f"{item.folder}/{item.name}.zip":
+                # Nothing to have: the machine has no ROMs, and no set carries a zip.
+                found += 1
+                claimed.add(relpath)
+                continue
             if relpath in claimed:
                 found += relpath in present
                 continue

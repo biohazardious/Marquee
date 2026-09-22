@@ -4,7 +4,7 @@
    the library on the console -- and until now no page said which step you were on.
    Seven pages of numbers is not the same as one answer to "what now?". */
 
-import { $, append, banner, clear, count, el, human } from './util.js';
+import { $, append, banner, clear, count, el, human, pressable } from './util.js';
 import { post, state } from './api.js';
 import { icon } from './icons.js';
 
@@ -180,12 +180,13 @@ function pipeline(data) {
 }
 
 function stage({ name, icon: glyph, page, state: tone, value, unit, note }) {
-  return el('div', { class: `stage ${tone}`, onclick: go(page), tabindex: '0', role: 'button' },
+  // Focusable was not enough: Enter and Space did nothing.
+  return pressable(el('div', { class: `stage ${tone}`, onclick: go(page) },
     el('div', { class: 'stage-head' }, icon(glyph), el('span', { text: name }),
       el('i', { class: 'dot', title: TONE_WORD[tone] })),
     el('div', { class: 'stage-value', text: value }),
     el('div', { class: 'stage-unit', text: unit }),
-    el('div', { class: 'stage-note', text: note }));
+    el('div', { class: 'stage-note', text: note })), go(page));
 }
 
 const TONE_WORD = { on: 'ready', warn: 'needs attention', bad: 'blocked', off: 'not started' };

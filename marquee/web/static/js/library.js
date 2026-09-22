@@ -2,12 +2,12 @@
    with a detail panel behind each one. */
 
 import { icon } from './icons.js';
-import { $, append, badges, banner, clear, count, debounce, el, hero, human, pressable, shot, subtitle } from './util.js';
+import { $, append, badges, banner, clear, count, debounce, el, hero, human, pressable, shot, store, stored, subtitle } from './util.js';
 import { api, lock, machine as fetchMachine, machines as fetchMachines, post, state } from './api.js';
 
 const V = {
-  view: localStorage.getItem('marquee.view') || 'posters',
-  art: localStorage.getItem('marquee.art') || 'Named_Titles',
+  view: stored('marquee.view', 'posters'),
+  art: stored('marquee.art', 'Named_Titles'),
   query: '', genre: '', status: '', category: '', mature: '', have: '', condition: '',
   state: '',
   sort: 'description', dir: 'asc',
@@ -95,11 +95,17 @@ const COLUMNS = [
 ];
 
 function table() {
-  const head = el('tr', {}, COLUMNS.map((column) => el('th', {
-    class: `${column.cls || ''} ${column.sortable ? 'sortable' : ''}`,
-    onclick: column.sortable ? () => sortBy(column.key) : null,
-    text: column.label + (V.sort === column.key ? (V.dir === 'desc' ? ' ↓' : ' ↑') : ''),
-  })));
+  const head = el('tr', {}, COLUMNS.map((column) => {
+    const cell = el('th', {
+      class: `${column.cls || ''} ${column.sortable ? 'sortable' : ''}`,
+      onclick: column.sortable ? () => sortBy(column.key) : null,
+      'aria-sort': V.sort === column.key
+        ? (V.dir === 'desc' ? 'descending' : 'ascending') : null,
+      text: column.label + (V.sort === column.key ? (V.dir === 'desc' ? ' ↓' : ' ↑') : ''),
+    });
+    // Sortable from the keyboard as well as by mouse.
+    return column.sortable ? pressable(cell, () => sortBy(column.key)) : cell;
+  }));
 
   const body = V.rows.map((m) => pressable(el('tr', { class: m.here ? '' : 'absent', onclick: () => open(m.name) },
     el('td', { class: 'title-cell' },
@@ -362,7 +368,7 @@ export function toolbar() {
   const art = el('select', {
     onchange: (event) => {
       V.art = event.target.value;
-      localStorage.setItem('marquee.art', V.art);
+      store('marquee.art', V.art);
       render();
     },
   }, [
@@ -409,7 +415,7 @@ export function toolbar() {
 
 function setView(view) {
   V.view = view;
-  localStorage.setItem('marquee.view', view);
+  store('marquee.view', view);
   V.offset = 0;
   load();
 }
@@ -489,15 +495,53 @@ function fact(term, value) {
     ? [] : [el('dt', { text: term }), el('dd', {}, value)];
 }
 
+/* A drawer is a dialog: it says so, takes focus when it opens, keeps Tab inside it,
+   and hands focus back to whatever opened it. Before, a keyboard user opened a game
+   and went on tabbing through the page hidden underneath. */
+let returnFocus = null;
+
+function drawerShell(label) {
+  returnFocus = document.activeElement;
+  const scrim = el('div', { class: 'scrim', onclick: close, id: 'drawerScrim' });
+  const panel = el('aside', { class: 'drawer', id: 'drawer', role: 'dialog',
+                              'aria-modal': 'true', 'aria-label': label, tabindex: '-1',
+                              onkeydown: keepTabInside });
+  return { scrim, panel };
+}
+
+function mount(scrim, panel) {
+  document.body.append(scrim, panel);
+  panel.focus();
+}
+
+function keepTabInside(event) {
+  if (event.key !== 'Tab') return;
+  const panel = event.currentTarget;
+  const stops = [...panel.querySelectorAll(
+    'a[href], button:not([disabled]), input, select, textarea, [tabindex="0"]')]
+    .filter((node) => node.offsetParent !== null);
+  if (!stops.length) { event.preventDefault(); return; }
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 export async function open(name) {
   close();
-  if (location.hash !== `#library/${name}`) {
+  // Linkable from the library, where the drawer belongs. Opened from Selection it
+  // used to rewrite the address to #library/<name>, and a reload then landed there.
+  if (location.hash.startsWith('#library') && location.hash !== `#library/${name}`) {
     history.replaceState(null, '', `#library/${name}`);
   }
-  const scrim = el('div', { class: 'scrim', onclick: close, id: 'drawerScrim' });
-  const panel = el('aside', { class: 'drawer', id: 'drawer' });
+  const { scrim, panel } = drawerShell('Game details');
   panel.append(el('div', { class: 'scroll', text: 'Loading…' }));
-  document.body.append(scrim, panel);
+  mount(scrim, panel);
 
   let m;
   try {
@@ -595,6 +639,8 @@ export function close() {
   if (open && location.hash.startsWith('#library/')) {
     history.replaceState(null, '', '#library');
   }
+  if (open && returnFocus && document.contains(returnFocus)) returnFocus.focus();
+  if (open) returnFocus = null;
 }
 
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
@@ -615,16 +661,15 @@ function currentFilters() {
 
 async function downloadDrawer() {
   close();
-  const scrim = el('div', { class: 'scrim', onclick: close, id: 'drawerScrim' });
-  const panel = el('aside', { class: 'drawer', id: 'drawer' });
+  const { scrim, panel } = drawerShell('Download these games');
   const body = el('div', { class: 'scroll' });
   panel.append(
     el('header', {},
       el('div', {}, el('h3', { text: 'Download these games' }),
         el('div', { class: 'sub', text: `${count(V.total)} in view` })),
-      el('button', { class: 'close', text: '×', onclick: close })),
+      el('button', { class: 'close', text: '×', 'aria-label': 'Close', onclick: close })),
     body);
-  document.body.append(scrim, panel);
+  mount(scrim, panel);
 
   clear(body);
   body.append(

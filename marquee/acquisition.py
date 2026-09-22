@@ -183,7 +183,7 @@ def locate(client_path, mappings=None, download_dir=None):
     mapped = remap(client_path, mappings)
     if mapped != client_path or os.path.isdir(mapped) or not download_dir:
         return mapped
-    name = os.path.basename(client_path.rstrip("/"))
+    name = os.path.basename(client_path.replace("\\", "/").rstrip("/"))
     if name:
         candidate = os.path.join(download_dir, name)
         if os.path.isdir(candidate):
@@ -195,14 +195,44 @@ def inferred_mapping(client_path, download_dir):
     """The (qBittorrent's folder, this app's folder) pair `locate` would use, or None."""
     if not client_path or not download_dir:
         return None
-    name = os.path.basename(client_path.rstrip("/"))
+    slashed = client_path.replace("\\", "/").rstrip("/")
+    name = os.path.basename(slashed)
     if name and os.path.isdir(os.path.join(download_dir, name)):
-        return (os.path.dirname(client_path.rstrip("/")), download_dir)
+        parent = os.path.dirname(slashed)
+        if _windows(client_path):
+            parent = parent.replace("/", "\\")
+        return (parent, download_dir)
     return None
 
 
+def _windows(path):
+    """Whether qBittorrent's path is a Windows one: a drive letter or backslashes."""
+    return bool(path) and (
+        "\\" in path or (len(path) > 1 and path[1] == ":" and path[0].isalpha()))
+
+
+def _portable(path):
+    """A client path with forward slashes, and case-folded when it is a Windows one:
+    D:\\Torrents\\MAME and d:/torrents/MAME are one folder there."""
+    if not _windows(path):
+        return path
+    return path.replace("\\", "/").lower()
+
+
 def remap(path, mappings=None):
+    # A qBittorrent on Windows says D:\Torrents\MAME 0.289 ROMs; only "/" was ever
+    # looked for, so even a mapping typed for it never matched.
+    windows = _windows(path)
+    if windows:
+        slashed = path.replace("\\", "/")
     for remote, local in (mappings or ()):
+        if windows and _windows(remote):
+            remote = remote.replace("\\", "/").rstrip("/")
+            if _portable(slashed) == _portable(remote) \
+                    or _portable(slashed).startswith(_portable(remote) + "/"):
+                tail = slashed[len(remote):].strip("/")
+                return os.path.join(local, tail) if tail else local
+            continue
         remote = remote.rstrip("/")
         if path == remote or path.startswith(remote + "/"):
             tail = path[len(remote):].strip("/")

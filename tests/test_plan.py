@@ -7,7 +7,7 @@ import pytest
 
 from marquee import catalog, pipeline
 from marquee import plan as CopyPlan
-from marquee.web.job import describe, machine_rows
+from marquee.web.views import describe, machine_rows
 
 
 def build_from(mame_list, config):
