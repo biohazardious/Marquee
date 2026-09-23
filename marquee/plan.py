@@ -81,6 +81,16 @@ class PlannedItem:
     # still listable: the selection tree has to be able to show what is inside a
     # category before anyone can decide to put it back.
     excluded: bool = False
+    # What the console's own MAME makes of it, when that is older than the set:
+    # "newer" (it does not have the machine) or "missing" (the zip lacks a ROM it
+    # wants, named in `console_detail`). Empty when it runs, or nothing was asked.
+    console: str = ""
+    console_detail: list = field(default_factory=list)
+    # Where its disks live, when not beside its zip. A clone filed apart for the
+    # console keeps using the disk it shares with its parent where the parent keeps
+    # it: otherwise the plan asked to fetch a 37 MB disk the library already held,
+    # for a game the console cannot run anyway.
+    disk_folder: str = None
     # A file with this name is in the source folder but is not a finished file: a
     # torrent client's pre-allocated placeholder, or a download still in progress.
     # Counted as not downloaded, and said to be downloading rather than missing.
@@ -129,7 +139,7 @@ class PlannedItem:
         yield f"{self.folder}/{self.name}.zip"
         holder = self.chd_name or self.name
         for disk in self.disks:
-            yield f"{self.folder}/{holder}/{disk}.chd"
+            yield f"{self.disk_folder or self.folder}/{holder}/{disk}.chd"
 
     @property
     def rom_to_fetch(self):
@@ -165,8 +175,8 @@ class PlannedItem:
         if self.rom_source:
             yield self.rom_source, f"{self.folder}/{self.name}.zip", self.rom_bytes
         for source, size in zip(self.chd_sources, self.chd_sizes):
-            yield (source, f"{self.folder}/{self.chd_name}/{os.path.basename(source)}",
-                   size)
+            yield (source, f"{self.disk_folder or self.folder}/{self.chd_name}/"
+                           f"{os.path.basename(source)}", size)
 
 
 @dataclass

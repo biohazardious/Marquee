@@ -715,6 +715,8 @@ function dirty() {
   // used to be left out, so changing one never said the plan was out of date.
   return !(path('rom_dir') && path('chd_dir') && path('copy_path')
     && path('mature_rom_folder') && path('mame_version')
+    && path('console_mame_version') && path('version_mismatch_folder')
+    && path('missing_rom_folder')
     && flag('allow_mature') && flag('parents_only')
     && list('blacklist_genres') && list('blacklist_categories')
     && list('blacklist_roms'));
@@ -733,6 +735,8 @@ async function boot() {
   bar.condition.id = 'libCondition';
   $('libState').replaceWith(bar.state);
   bar.state.id = 'libState';
+  $('libConsole').replaceWith(bar.console);
+  bar.console.id = 'libConsole';
   $('libStatus').replaceWith(bar.statuses);
   bar.statuses.id = 'libStatus';
   $('libAdult').replaceWith(bar.adult);
@@ -799,7 +803,7 @@ async function boot() {
   // and "Title screens" in a row left the reader to guess which was which.
   for (const [id, caption] of [
     ['libGenre', 'Genre'], ['libHave', 'Have'], ['libCondition', 'Emulation'],
-    ['libState', 'Check'], ['libStatus', 'Transfer'], ['libAdult', 'Adult'],
+    ['libState', 'Check'], ['libConsole', 'Console'], ['libStatus', 'Transfer'], ['libAdult', 'Adult'],
     ['libArt', 'Art'], ['selGenre', 'Genre'], ['selHave', 'Have'],
     ['selCondition', 'Emulation'], ['selAdult', 'Adult'],
   ]) {

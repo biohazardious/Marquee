@@ -38,6 +38,9 @@ export function values() {
     allow_mature: checked('allow_mature'),
     mature_rom_folder: read('mature_rom_folder'),
     mame_version: read('mame_version'),
+    console_mame_version: read('console_mame_version'),
+    version_mismatch_folder: read('version_mismatch_folder'),
+    missing_rom_folder: read('missing_rom_folder'),
   };
   for (const key of Object.keys(out)) if (out[key] === undefined) delete out[key];
   return out;
@@ -126,6 +129,7 @@ export function renderVersions(payload) {
     select.append(el('option', { value: current, text: `MAME ${current}`, selected: true }));
   }
   box.append(select);
+  renderConsoleVersions(list);
   if (versions && versions.running && !list.length) {
     box.append(el('div', { class: 'hint', text: 'Reading the list of releases…' }));
   } else if (versions && versions.error && !list.length) {
@@ -136,6 +140,27 @@ export function renderVersions(payload) {
 }
 
 function current_() { return current ? current.mame_version : ''; }
+
+/* The MAME the console runs. Only its XML is needed -- nothing is categorised by it --
+   so any release with a published XML will do. */
+function renderConsoleVersions(list) {
+  const box = $('consoleVersionBox');
+  if (!box) return;
+  const chosen = $('console_mame_version')
+    ? $('console_mame_version').value : (current?.console_mame_version || '');
+  const signature = list.map((entry) => entry.version).join('|');
+  if (box.dataset.signature === signature && $('console_mame_version')) return;
+  box.dataset.signature = signature;
+  clear(box);
+  const select = el('select', { id: 'console_mame_version' },
+    el('option', { value: '', text: 'The same as the set' }),
+    list.filter((entry) => entry.xml).map((entry) => el('option', {
+      value: entry.version, text: `MAME ${entry.version}`, selected: entry.version === chosen })));
+  if (chosen && !list.some((entry) => entry.version === chosen)) {
+    select.append(el('option', { value: chosen, text: `MAME ${chosen}`, selected: true }));
+  }
+  box.append(select);
+}
 
 export function render() {
   const host = $('settingsBody');
@@ -200,7 +225,21 @@ export function render() {
           el('span', {}, el('b', { text: 'Copy artwork into the library' }),
             el('div', { class: 'hint', text:
               'Place the downloaded pictures beside the games so the console shows '
-              + 'them. Download them first from the Library page.' }))))),
+              + 'them. Download them first from the Library page.' }))),
+        el('label', { class: 'fld' },
+          el('span', {}, 'The console\u2019s MAME',
+            el('em', { text: ' — when it is older than the set' })),
+          el('div', { id: 'consoleVersionBox' }),
+          el('div', { class: 'hint', text:
+            'Batocera ships its own MAME, often a few releases behind. Games it does not '
+            + 'have, and games whose zip lacks a ROM it still asks for, are filed under '
+            + 'their own folders instead of among the ones that start. Nothing is deleted; '
+            + 'they move back when this changes.' })),
+        el('div', { class: 'rowflex', style: 'gap:14px;align-items:flex-start' },
+          el('div', { style: 'flex:1' }, field('version_mismatch_folder', 'Needs a newer MAME',
+            null, config.version_mismatch_folder)),
+          el('div', { style: 'flex:1' }, field('missing_rom_folder', 'Missing a ROM',
+            null, config.missing_rom_folder))))),
 
     el('div', { class: 'panel' },
       el('h2', {}, 'Download client',

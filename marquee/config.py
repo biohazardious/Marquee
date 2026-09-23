@@ -49,6 +49,13 @@ class Config:
     # The MAME version the source romset is. Chosen once and remembered; both the XML
     # and the catlist are then fetched for exactly this release.
     mame_version: str = None
+    # The MAME the console actually runs, when it is older than the set. Batocera
+    # ships what it ships -- 0.285 under a 0.289 library -- and a game that release
+    # does not have, or whose zip lacks a ROM it wants, is filed apart rather than
+    # listed among the ones that start. Empty is off.
+    console_mame_version: str = None
+    version_mismatch_folder: str = "ZZ-Version-Mismatch"
+    missing_rom_folder: str = "ZZ-Missing-ROM"
 
     # --- acquisition -------------------------------------------------------- #
     # Where torrents are fetched. Empty means the romset is already on disk and this
@@ -176,6 +183,7 @@ def read_settings_file(path):
             setattr(config, target, value)
 
     for key in ("copy_path", "mature_rom_folder", "mame_version",
+                "console_mame_version", "version_mismatch_folder", "missing_rom_folder",
                 "download_client", "download_username", "download_password",
                 "download_dir", "remote_path_mappings"):
         if values.get(key):
@@ -230,6 +238,13 @@ mame_version = {mame_version}
 
 allow_mature = {allow_mature}
 mature_rom_folder = {mature_rom_folder}
+
+; The MAME the console runs, when it is older than the set. Games it does not have
+; go under the first folder, games whose zip lacks a ROM it wants under the second.
+; Leave it empty when the console runs the set's own release.
+console_mame_version = {console_mame_version}
+version_mismatch_folder = {version_mismatch_folder}
+missing_rom_folder = {missing_rom_folder}
 
 ; One game, one ROM: keep each family's parent and leave its other versions out.
 parents_only = {parents_only}
@@ -338,6 +353,9 @@ def write_settings_file(path, config):
         copy_path=_blank(config.copy_path), overrides=_overrides(config),
         allow_mature=config.allow_mature,
         mature_rom_folder=_blank(config.mature_rom_folder),
+        console_mame_version=config.console_mame_version or "",
+        version_mismatch_folder=_blank(config.version_mismatch_folder),
+        missing_rom_folder=_blank(config.missing_rom_folder),
         parents_only=config.parents_only,
         write_gamelist=config.write_gamelist, copy_artwork=config.copy_artwork,
         mame_version=config.mame_version or "",

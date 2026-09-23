@@ -346,7 +346,7 @@ class Handler(BaseHTTPRequestHandler):
                     mature=one("mature"), have=one("have"),
                     condition=one("condition"), reason=one("reason"),
                     state=one("state"), with_excluded=one("excluded") == "1",
-                    sizes=self.app.release_sizes()))
+                    sizes=self.app.release_sizes(), console=one("console")))
                 return
         except MarqueeError as error:
             self._send_json({"error": str(error)}, 400)

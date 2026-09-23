@@ -10,8 +10,8 @@ import posixpath
 import time
 from dataclasses import dataclass, field, replace
 
-from . import (backends, catalog, fetch, gamelist, manifest, plan as planning,
-               sources, sync)
+from . import (backends, catalog, console, fetch, gamelist, manifest,
+               plan as planning, sources, sync)
 from .errors import MarqueeError, SourceNotFoundError, VersionMismatchError
 from .reporting import Reporter
 
@@ -80,6 +80,9 @@ class Resolution:
     # Every genre this catlist knows about, so a UI can offer them to blacklist
     # instead of asking the user to type them.
     genres: list = field(default_factory=list)
+    # What the console's MAME makes of the selection, when one is set: {"version",
+    # "newer", "missing", "error"}. None when the console runs the set's release.
+    console: dict = None
 
 
 @dataclass
@@ -355,6 +358,9 @@ def build_plan(config, options=None, reporter=None):
     built = planning.build(mame_list, rom_dir, chd_dir,
                            catalog.folder_namer(config), config.allow_mature,
                            progress=progress)
+    # Before anything is compared with the library: the folder a game belongs in is
+    # what the diff moves it to.
+    resolution.console = _file_by_console(built, config, resolution, options, reporter)
     built.left_out = _left_out(rejects, catlist, config, rom_dir, chd_dir, reporter,
                                progress=progress)
 
@@ -413,6 +419,61 @@ def _disk_space(backend):
         return backend.disk_space()
     except Exception:  # noqa: BLE001 - see above
         return None
+
+
+def _file_by_console(built, config, resolution, options, reporter):
+    """File the games the console's MAME cannot run under their own folders.
+
+    Nothing is dropped: a game moves under "ZZ-Version-Mismatch" or "ZZ-Missing-ROM"
+    with its genre and category inside, and moves back -- a rename, not a copy --
+    the day the console's MAME catches up and the setting says so.
+    """
+    version = (config.console_mame_version or "").strip()
+    if not version or version == resolution.xml_version:
+        return None
+    summary = {"version": version, "newer": 0, "missing": 0, "error": None}
+    try:
+        cached = fetch.cached_xml(version)
+        if os.path.isfile(cached) and os.path.getsize(cached):
+            console_xml = cached
+        elif options.offline:
+            raise SourceNotFoundError(f"MAME {version}'s XML is not cached and the "
+                                      f"plan is offline.")
+        else:
+            console_xml = fetch.fetch_xml(version, reporter=reporter)
+        reporter.stage(f"Checking what the console's MAME {version} can run...")
+        found = console.classify(console.media(resolution.xml_file),
+                                 console.media(console_xml),
+                                 [item.name for item in built.wanted])
+    except (MarqueeError, OSError, SyntaxError) as error:
+        # Nothing moves on a guess: the library stays as it is, and the page says why.
+        # (A truncated XML is a SyntaxError -- ElementTree's ParseError.)
+        summary["error"] = str(error)
+        reporter.warn(f"Could not read MAME {version} to check the console against "
+                      f"it; every game stays where it is. ({error})")
+        return summary
+    before = {item.name: item.folder for item in built.wanted}
+    for item in built.wanted:
+        verdict = found.get(item.name)
+        if verdict is None:
+            continue
+        kind, lacking = verdict
+        item.console, item.console_detail = kind, lacking
+        item.folder = f"{console.folder_for(kind, config)}/{item.folder}"
+        summary[kind] += 1
+    # A merged set keeps a clone's disk in its parent's folder. When only one of the
+    # two was filed apart, the disk stays where the parent has it: sfiii2a went under
+    # ZZ-Version-Mismatch while sfiii2 stayed, and the plan wanted cap-3ga000.chd
+    # fetched a second time for a game the console cannot start.
+    by_name = {item.name: item for item in built.wanted}
+    for item in built.wanted:
+        holder = by_name.get(item.chd_name) if item.chd_name != item.name else None
+        if holder is not None and before[holder.name] == before[item.name] \
+                and holder.folder != item.folder:
+            item.disk_folder = holder.folder
+    reporter.info(f"The console's MAME {version}: {summary['newer']:,} games it does not "
+                  f"have, {summary['missing']:,} whose zip lacks a ROM it wants.")
+    return summary
 
 
 def tidy_folders(backend, candidates):

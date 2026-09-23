@@ -149,6 +149,26 @@ finding checked by hand. Sixty-odd findings, twenty-one of them real enough to l
 
 Every persistent write now goes through `marquee/atomic.py`. Test count 885 → 911.
 
+## 10. Games the console's MAME cannot run — **done, 2026-09-23**
+
+Batocera ships its own MAME, a few releases behind the set: 0.285 under a 0.289
+library. Older full sets are not published, so they cannot be matched. Measured on the
+real library: 714 of 10,022 games are machines 0.285 does not have, 67 are ones whose
+0.289 zip lacks a ROM 0.285 still wants, and the other 9,241 run as they are (MAME
+finds a ROM by CRC, so a relabelled chip is no obstacle). With *The console's MAME* set,
+the first kind is filed under `ZZ-Version-Mismatch/`, the second under `ZZ-Missing-ROM/`,
+genre and category kept inside; both names are settings. Nothing is deleted, and the
+day the console catches up the setting changes and they move back by rename.
+
+## 11. An ignore list — **next**
+
+The library root on a Batocera box holds files Marquee did not put there and must never
+touch: the BIOS zips a BIOS pack drops in (`neogeo.zip`, `pgm.zip`, `cpzn1.zip`...) for
+the older libretro cores that want split sets. Today they show up among "files nothing
+wants", one tick away from deletion. A list of paths or patterns the user maintains --
+Settings, and an "Ignore" button on the Transfer page's delete list -- that the plan
+leaves out of the diff entirely: never deleted, never moved, never counted.
+
 ## 8. A database — only when something needs it
 
 The design note argues for SQLite. Nothing yet does: the plan is rebuilt from the XML

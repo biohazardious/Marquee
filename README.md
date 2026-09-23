@@ -386,6 +386,14 @@ about what you have, not only a place to put things.
   On MAME 0.289 that is 7,538 fewer machines and **80 GB less** — Dragon's Lair alone
   ships four revisions at 11.5 GB each. A game whose parent did not survive the
   filters keeps one version, so nothing disappears.
+- **The console's own MAME**: Batocera ships its own, often a few releases behind the
+  set, and older full sets are not published. Name it in Settings and every game is
+  held to that release's XML: machines it does not have go under
+  `ZZ-Version-Mismatch/`, games whose zip lacks a ROM it still asks for under
+  `ZZ-Missing-ROM/`, genre and category kept inside. On a 0.289 library under
+  Batocera's 0.285 that was 714 and 67 of 10,022 — the other 9,241 run as they are,
+  since MAME finds a ROM by CRC. Nothing is copied or deleted: they move by rename,
+  and move back when the console catches up.
 
 ### Acquisition
 

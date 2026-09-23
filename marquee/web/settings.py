@@ -145,6 +145,9 @@ class SettingsMixin:
             "write_gamelist": config.write_gamelist,
             "copy_artwork": config.copy_artwork,
             "mature_rom_folder": config.mature_rom_folder,
+            "console_mame_version": config.console_mame_version or "",
+            "version_mismatch_folder": config.version_mismatch_folder or "",
+            "missing_rom_folder": config.missing_rom_folder or "",
             "blacklist_genres": config.blacklist_genres,
             "blacklist_categories": config.blacklist_categories,
             "blacklist_roms": config.blacklist_roms,
@@ -172,7 +175,7 @@ class SettingsMixin:
         overrides = {}
         for key in ("rom_dir", "chd_dir", "copy_path", "download_client",
                     "download_username", "download_dir", "remote_path_mappings",
-                    "mature_rom_folder"):
+                    "mature_rom_folder", "version_mismatch_folder", "missing_rom_folder"):
             if key in body:
                 value = body[key]
                 if value is not None and not isinstance(value, str):
@@ -215,6 +218,9 @@ class SettingsMixin:
             # The form's "Automatic": with_overrides ignores None, so cleared has to be
             # said explicitly or the old choice would survive every save.
             config.mame_version = None
+        # Empty is "the console runs the set's own release": off, and said as None.
+        if "console_mame_version" in body:
+            config.console_mame_version = (body.get("console_mame_version") or "").strip() or None
         return config
 
     # -- actions ------------------------------------------------------------ #

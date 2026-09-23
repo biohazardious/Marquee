@@ -9,7 +9,7 @@ const V = {
   view: stored('marquee.view', 'posters'),
   art: stored('marquee.art', 'Named_Titles'),
   query: '', genre: '', status: '', category: '', mature: '', have: '', condition: '',
-  state: '',
+  state: '', console: '',
   sort: 'description', dir: 'asc',
   offset: 0, limit: 60, total: 0, bytes: 0, rows: [], loading: false,
 };
@@ -31,12 +31,15 @@ export async function load() {
   // narrower filter chosen after it. Only the latest one is allowed to draw.
   const mine = (generation += 1);
   V.loading = true;
+  // The Console filter only means something while Settings names an older MAME.
+  const consoleFilter = $('libConsole')?.closest('label');
+  if (consoleFilter) consoleFilter.hidden = !state.data.resolution?.console;
   V.limit = PAGE[V.view];
   host.classList.add('loading');
   try {
     const found = await fetchMachines({
       q: V.query, genre: V.genre, status: V.status, mature: V.mature, have: V.have,
-      condition: V.condition, state: V.state,
+      condition: V.condition, state: V.state, console: V.console,
       sort: V.sort, dir: V.dir, offset: V.offset, limit: V.limit,
     });
     if (mine !== generation) return;
@@ -59,12 +62,12 @@ export async function load() {
 
 export function clearFilters() {
   V.query = ''; V.genre = ''; V.status = ''; V.mature = '';
-  V.have = ''; V.condition = ''; V.state = '';
+  V.have = ''; V.condition = ''; V.state = ''; V.console = '';
   V.offset = 0;
   const search = $('libSearch');
   if (search) search.value = '';
   for (const id of ['libGenre', 'libStatus', 'libAdult', 'libHave',
-    'libCondition', 'libState']) {
+    'libCondition', 'libState', 'libConsole']) {
     if ($(id)) $(id).value = '';
   }
   load();
@@ -391,6 +394,18 @@ export function toolbar() {
   ].map(([value, label]) => el('option', { value, text: label,
                                           selected: V.state === value })));
 
+  /* What the console's own MAME makes of each game, when Settings names one older
+     than the set. Hidden while it does not: then every game "runs". */
+  const consoleFit = el('select', {
+    onchange: (event) => { V.console = event.target.value; V.offset = 0; load(); },
+  }, [
+    ['', 'Any'],
+    ['runs', 'Runs on it'],
+    ['newer', 'Needs a newer MAME'],
+    ['missing', 'Missing a ROM'],
+  ].map(([value, label]) => el('option', { value, text: label,
+                                          selected: V.console === value })));
+
   const adult = el('select', {
     onchange: (event) => { V.mature = event.target.value; V.offset = 0; load(); },
   }, [
@@ -443,6 +458,7 @@ export function toolbar() {
   views.children[1].prepend(icon('menu'));
 
   return { search, genres, statuses, adult, have, condition, state: checkResult,
+    console: consoleFit,
     art, getArt, get,
            views };
 }
@@ -483,11 +499,11 @@ export function fillGenres(select, plan) {
 
 const FILTER_LABELS = {
   query: 'search', genre: 'genre', have: 'downloaded', condition: 'condition',
-  state: 'check result', status: 'action', mature: 'adult',
+  state: 'check result', status: 'action', mature: 'adult', console: 'console',
 };
 const CONTROL_FOR = {
   query: 'libSearch', genre: 'libGenre', have: 'libHave', condition: 'libCondition',
-  state: 'libState', status: 'libStatus', mature: 'libAdult',
+  state: 'libState', status: 'libStatus', mature: 'libAdult', console: 'libConsole',
 };
 const WORDS = {
   have: { yes: 'on disk', no: 'not downloaded' },
@@ -496,6 +512,8 @@ const WORDS = {
   status: { new: 'copy over', update: 'replace', move: 'move', keep: 'leave alone' },
   state: { stale: 'out of date', incomplete: 'missing an inherited ROM',
     current: 'verified current', damaged: 'damaged', absent: 'file missing' },
+  console: { runs: 'runs on the console', newer: 'needs a newer MAME',
+    missing: 'console misses a ROM' },
 };
 
 function describeFilter(key, value) {
@@ -616,6 +634,7 @@ export async function open(name) {
         fact('Screen', screen),
         fact('Condition', conditionText(m)),
         fact('Checked', checkedText(m)),
+        fact('On the console', consoleText(m)),
         fact('Parent', m.parent ? el('a', { href: '#', text: m.parent,
           onclick: (event) => { event.preventDefault(); open(m.parent); } }) : ''),
         fact(m.left_out ? 'Would go to' : 'Goes to', el('span', { class: 'mono', text: m.folder })),
@@ -700,7 +719,7 @@ export { human };
 
 function currentFilters() {
   return { query: V.query, genre: V.genre, status: V.status, mature: V.mature,
-           have: V.have, condition: V.condition, state: V.state,
+           have: V.have, condition: V.condition, state: V.state, console: V.console,
            category: V.category || '' };
 }
 
@@ -806,6 +825,16 @@ function conditionText(m) {
 }
 
 /* What the last check of this file against the release found, in its own words. */
+/* Only when it does not run: a line saying "runs" under ten thousand games is noise. */
+function consoleText(m) {
+  const version = state.data.resolution?.console?.version;
+  if (m.console === 'newer') return `MAME ${version || 'on the console'} does not have this machine`;
+  if (m.console === 'missing') {
+    return `MAME ${version || 'on the console'} also wants ${(m.console_detail || []).join(', ')}, which this set's zip does not hold`;
+  }
+  return '';
+}
+
 function checkedText(m) {
   if (!m.state) return '';
   if (m.state === 'current') return 'Matches the release';

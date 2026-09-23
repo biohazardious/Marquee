@@ -397,6 +397,7 @@ class Job:
                 "machines_kept": resolution.kept_count,
                 "genres": resolution.genres,
                 "destination_exists": resolution.destination_exists,
+                "console": getattr(resolution, "console", None),
             }
         if checked is not None:
             payload["checked"] = checked

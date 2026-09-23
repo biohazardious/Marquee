@@ -158,6 +158,14 @@ export function badges(machine) {
                           text: 'IMPERFECT' }));
   }
   if (machine.mature) out.push(el('span', { class: 'badge adult', text: '18+' }));
+  // The console's MAME cannot start it: filed under its own folder, and said so here.
+  if (machine.console === 'newer') {
+    out.push(el('span', { class: 'badge flaw', title: 'The console\u2019s MAME does not have this machine',
+                          text: 'NEWER MAME' }));
+  } else if (machine.console === 'missing') {
+    out.push(el('span', { class: 'badge flaw', title: (machine.console_detail || []).join(', '),
+                          text: 'ROM MISSING' }));
+  }
   // In the source folder but not finished -- a placeholder the torrent client has
   // allocated, or a download on its way. Not "missing": it is coming.
   if (machine.partial) out.push(el('span', { class: 'badge move', text: 'downloading' }));

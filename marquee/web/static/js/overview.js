@@ -250,6 +250,7 @@ function healthPanel(data) {
     line(watch.newer ? 'warn' : (watch.newest ? 'good' : 'off'), 'Release',
       watch.newer ? `MAME ${watch.newest} is out; this library holds ${watch.library}`
         : watch.newest ? `MAME ${watch.newest} is the newest published` : 'release list not read yet'),
+    consoleLine(data.resolution?.console),
     line(!plan ? 'off' : !checked ? 'off' : (stale || damaged) ? 'warn' : 'good', 'Library check',
       !plan ? 'no plan yet' : !checked ? 'not checked yet — optional; it opens every file'
         : (stale || damaged) ? `${plural(stale + damaged, 'game', 'games')} out of date or damaged`
@@ -267,6 +268,19 @@ function healthPanel(data) {
   return el('div', { class: 'panel' },
     el('h2', {}, 'Health'),
     el('div', { class: 'body tight' }, el('ul', { class: 'health' }, items)));
+}
+
+/* Only when Settings names a console MAME older than the set. */
+function consoleLine(fit) {
+  if (!fit) return null;
+  if (fit.error) {
+    return line('warn', 'Console MAME', `could not read MAME ${fit.version}; every game stays where it is`);
+  }
+  const apart = (fit.newer || 0) + (fit.missing || 0);
+  return line(apart ? 'info' : 'good', 'Console MAME', apart
+    ? `${fit.version}: ${plural(fit.newer || 0, 'game needs', 'games need')} a newer MAME, `
+      + `${plural(fit.missing || 0, 'game misses', 'games miss')} a ROM \u2014 filed apart`
+    : `${fit.version} runs every game in the selection`);
 }
 
 function line(tone, label, text) {

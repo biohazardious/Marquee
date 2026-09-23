@@ -109,7 +109,8 @@ def weigh_together(items, sizes, held):
 
 
 def filtered(plan, query="", status="", genre="", category="", mature="", have="",
-             condition="", reason="", state="", statuses=None, with_excluded=False):
+             condition="", reason="", state="", statuses=None, with_excluded=False,
+             console=""):
     """The machines the page is currently showing -- on disk or not.
 
     Shared with the download action on purpose: "fetch what I am looking at" is only
@@ -142,6 +143,9 @@ def filtered(plan, query="", status="", genre="", category="", mature="", have="
             continue
         if state and item.state != state:
             continue
+        # "runs" is the games the console's MAME can start; the others by kind.
+        if console and (getattr(item, "console", "") or "runs") != console:
+            continue
         if condition == "good" and not item.flawless:
             continue
         if condition == "flawed" and item.flawless:
@@ -159,7 +163,7 @@ def filtered(plan, query="", status="", genre="", category="", mature="", have="
 
 def machine_rows(plan, query="", status="", genre="", category="", offset=0, limit=200,
                  sort="size", descending=True, with_excluded=False, mature="", have="",
-                 condition="", reason="", state="", sizes=None):
+                 condition="", reason="", state="", sizes=None, console=""):
     """A filtered, sorted page of the plan's machines.
 
     `with_excluded` lists the machines the exclude list leaves out as well, marked.
@@ -173,7 +177,8 @@ def machine_rows(plan, query="", status="", genre="", category="", offset=0, lim
     # actually returned. Building 12,000 of them to hand back 60 cost 32 ms a request.
     kept = filtered(plan, query=query, status=status, genre=genre, category=category,
                     mature=mature, have=have, condition=condition, reason=reason,
-                    state=state, statuses=statuses, with_excluded=with_excluded)
+                    state=state, statuses=statuses, with_excluded=with_excluded,
+                    console=console)
 
     weigh = lambda item: item.total_bytes or sizes.get(item.name, 0)  # noqa: E731
     keys = {"size": weigh,
@@ -677,6 +682,9 @@ def machine_row(item, state="", size=None):
         # What checking it against the release found, and what was wrong.
         "state": item.state,
         "state_detail": item.state_detail,
+        # What the console's MAME makes of it: "newer", "missing" or "" (runs).
+        "console": getattr(item, "console", ""),
+        "console_detail": list(getattr(item, "console_detail", []) or []),
         "savestate": item.savestate,
         "features": item.features,
         "condition": item.condition(),
@@ -842,6 +850,10 @@ def built_from(config):
         # land in -- and neither was here, so changing one never made a plan stale.
         "parents_only": bool(config.parents_only),
         "mature_rom_folder": config.mature_rom_folder or "",
+        # Which folder a game the console cannot run is filed under.
+        "console_mame_version": config.console_mame_version or "",
+        "version_mismatch_folder": config.version_mismatch_folder or "",
+        "missing_rom_folder": config.missing_rom_folder or "",
         "blacklist_genres": sorted(config.blacklist_genres or []),
         "blacklist_categories": sorted(config.blacklist_categories or []),
         "blacklist_roms": sorted(config.blacklist_roms or []),

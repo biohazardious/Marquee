@@ -794,7 +794,7 @@ def _untouched(files):
 
 
 ALLOWED_FILTERS = ("query", "status", "genre", "category", "mature", "have",
-                   "condition", "reason", "state")
+                   "condition", "reason", "state", "console")
 
 
 def _filters(given):
