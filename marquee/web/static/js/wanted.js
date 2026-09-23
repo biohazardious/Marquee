@@ -148,7 +148,29 @@ function result(data) {
   box.append(el('div', { class: 'cards' },
     stat('Already correct', count(data.unchanged)),
     stat('Changed', count(data.changed)),
-    stat('New', count(data.added))));
+    stat('Now working', count(data.now_working || 0)),
+    stat('New in this release', count(data.new || 0)),
+    data.missing ? stat('Not in the library yet', count(data.missing)) : null,
+    data.leaving ? stat('Leaving', count(data.leaving)) : null));
+
+  // Which ones, by name: "35 now working" is a number, "Daytona USA" is a reason.
+  const named = (label, rows) => (rows && rows.length
+    ? el('div', { class: 'hint', style: 'margin-bottom:8px' },
+      el('b', { text: `${label}: ` }),
+      rows.map((row) => row.description || row.name).join(', '),
+      rows.length >= 12 ? '…' : '')
+    : null);
+  append(box,
+    named(`Did not run in ${data.from}, runs in ${data.to}`, data.now_working_examples),
+    named(`New in ${data.to}`, data.new_examples),
+    data.leaving
+      ? el('div', { class: 'hint', style: 'margin-bottom:10px' },
+        el('b', { text: `Leaving the selection: ` }),
+        (data.leaving_examples || []).map((row) => row.description || row.name).join(', '),
+        (data.leaving_examples || []).length >= 12 ? '…' : '',
+        ` — MAME ${data.to} no longer runs them or no longer has them. They stay in the `
+        + 'library until you tick “Also delete” on the Transfer page.')
+      : null);
 
   if (!data.fetch.length) {
     box.append(el('div', { class: 'banner good',
@@ -160,7 +182,8 @@ function result(data) {
   append(box,
     el('div', { class: 'banner info' },
       `${plural(data.fetch.length, 'game', 'games')} to fetch to move from ${data.from} to ${data.to}. `
-      + `The other ${count(data.unchanged)} are already the right bytes on disk.`),
+      + `The other ${count(data.unchanged)} are already the right bytes on disk. `
+      + `Then set MAME ${data.to} in Settings and build the plan: disks, and the transfer, follow from it.`),
     data.examples.length
       ? el('div', { class: 'hint', style: 'margin-bottom:10px',
           text: `Changed, for instance: ${data.examples.join(', ')}` })
@@ -171,7 +194,7 @@ function result(data) {
         event.target.disabled = true;
         clear(outcome);
         try {
-          const done = await post('/api/missing/fetch', { machines: data.fetch });
+          const done = await post('/api/missing/fetch', { machines: data.fetch, version: data.to });
           outcome.append(el('div', { class: 'banner good' },
             `Asked for ${plural(done.selected, 'file', 'files')} (${done.bytes_human}). `
             + `${count(done.raised)} newly selected. Watch Activity.`));

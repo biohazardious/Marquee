@@ -415,7 +415,9 @@ class DownloadsMixin:
             raise MarqueeError("Nothing to fetch.")
 
         client = self.client()
-        release = self._rom_release()
+        # An upgrade names its release: the newest set is not the one it was priced
+        # against when the move is to anything but the newest.
+        release = self._rom_release((body or {}).get("version") or None)
         dry_run = bool((body or {}).get("dry_run"))
         part = self._one_part(release, client, dry_run,
                               lambda files, piece: acquire.rom_selection(
@@ -459,24 +461,27 @@ class DownloadsMixin:
         except (MarqueeError, KeyError, TypeError):
             return None
 
-    def _release_of(self, kind, variant, what):
+    def _release_of(self, kind, variant, what, version=None):
         found = self.releases.get("data")
         if not found:
             self.refresh_releases()
             raise MarqueeError("Reading the release list; try again in a moment.")
         candidates = [entry for entry in found
                       if entry["kind"] == kind and entry["variant"] == variant
-                      and entry["full_set"]]
+                      and entry["full_set"]
+                      and (version is None or entry["version"] == version)]
         if not candidates:
-            raise MarqueeError(f"No {what} is listed.")
+            raise MarqueeError(f"No {what} is listed"
+                               + (f" for MAME {version}." if version else "."))
         newest = max(candidates, key=lambda entry: _version_key(entry["version"]))
         return indexers.Release(kind=newest["kind"], version=newest["version"],
                                 variant=newest["variant"], infohash=newest["infohash"],
                                 name=newest["name"], magnet=newest["magnet"])
 
-    def _rom_release(self):
-        """The newest full non-merged ROM set, from the indexer."""
-        return self._release_of("roms", "non-merged", "non-merged ROM set")
+    def _rom_release(self, version=None):
+        """The newest full non-merged ROM set, from the indexer -- or the one for
+        `version`, which is what moving a library to that release fetches from."""
+        return self._release_of("roms", "non-merged", "non-merged ROM set", version)
 
     def _chd_release(self):
         """The newest full merged CHD set. Disks are only published merged."""

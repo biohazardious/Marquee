@@ -125,3 +125,37 @@ class TestErrors:
         monkeypatch.setattr(MameFetch.urllib.request, "urlopen", unreachable)
         with pytest.raises(MameFetch.SupportFileError, match="Could not reach"):
             MameFetch._request("https://example.invalid/x", 5)
+
+
+class TestAListxmlTheArchiveNoLongerHolds:
+    """The archive's 0.287 commit is the one that removed arcade.xml: the version is
+    listed, and its raw URL answers 404. Say that, not "HTTP 404 fetching <url>"."""
+
+    def test_it_says_what_went_wrong(self, monkeypatch):
+        from marquee import fetch
+        from marquee.errors import SourceNotFoundError
+        monkeypatch.setattr(fetch, "_commit_history",
+                            lambda **kw: [("0.287", "a" * 40), ("0.286", "b" * 40)])
+
+        def refused(url, timeout):
+            raise SourceNotFoundError(f"HTTP 404 fetching {url}")
+        monkeypatch.setattr(fetch, "_request", refused)
+        with pytest.raises(SourceNotFoundError) as error:
+            fetch.fetch_xml("0.287")
+        assert "not there to download" in str(error.value)
+
+    def test_a_later_commit_for_the_same_release_is_tried(self, monkeypatch, tmp_path):
+        from marquee import fetch
+        from marquee.errors import SourceNotFoundError
+        monkeypatch.setattr(fetch, "_commit_history",
+                            lambda **kw: [("0.287", "a" * 40), ("0.287", "c" * 40)])
+        body = b'<?xml version="1.0"?><mame build="0.287 (mame0287)"></mame>'
+
+        def answer(url, timeout):
+            if "a" * 40 in url:
+                raise SourceNotFoundError(f"HTTP 404 fetching {url}")
+            return body
+        monkeypatch.setattr(fetch, "_request", answer)
+        path = fetch.fetch_xml("0.287")
+        with open(path, "rb") as handle:
+            assert handle.read() == body

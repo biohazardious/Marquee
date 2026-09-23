@@ -1368,6 +1368,44 @@ class TestCheckingTheLibrary:
 
 
 
+
+class TestAGameOutsideTheLibraryStillHasDetails:
+    """Clicking a game unticked on Selection answered "No machine named 'pgs268'".
+    It is still in the release; the panel says what the XML says, and why it is out."""
+
+    @pytest.fixture
+    def planned(self, server, xml_path, catlist_path, romset):
+        base, app = server
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        assert app.job.state == "planned", app.job.error
+        return base, app
+
+    def test_an_excluded_game(self, planned):
+        base, app = planned
+        excluded = app.job.plan.excluded_items
+        assert excluded, "the fixture excludes the Board Game genre"
+        detail = get(base, f"/api/machine?name={excluded[0].name}")
+        assert detail["left_out"] is True
+        assert detail["description"] == excluded[0].description
+        assert detail["reason_label"]
+
+    def test_a_game_a_filter_dropped(self, planned):
+        base, app = planned
+        dropped = app.job.plan.left_out.wanted
+        assert dropped, "the fixture has machines the filters leave out"
+        item = dropped[0]
+        detail = get(base, f"/api/machine?name={item.name}")
+        assert detail["left_out"] is True
+        assert detail["reason"] == item.reason
+        assert detail["reason_label"] and detail["reason_label"] != item.reason
+
+    def test_a_name_in_no_list_is_still_unknown(self, planned):
+        base, _app = planned
+        with pytest.raises(urllib.error.HTTPError) as error:
+            get(base, "/api/machine?name=nosuchgame")
+        assert error.value.code == 404
+
 class TestACheckIsKept:
     """A check opens every file -- ten minutes over a share -- and its answer used to
     go with the plan it was made on. The next "Build plan", or a container restart,

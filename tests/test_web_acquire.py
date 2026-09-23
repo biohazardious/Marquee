@@ -534,6 +534,10 @@ class TestUpgradePreview:
         from marquee.web import application as app_module
         monkeypatch.setattr(app_module.fetch, "fetch_xml",
                             lambda version, **kw: str(here if version == "0.282" else there))
+        # The preview plans at the target release, which asks for its catlist: the
+        # fixture's, not one from the network.
+        monkeypatch.setattr(app_module.fetch, "fetch_support_file",
+                            lambda name, version, **kw: catlist_path)
 
         app.releases["data"] = [
             {"kind": "roms", "version": v, "variant": "non-merged", "full_set": True,
@@ -593,6 +597,102 @@ class TestUpgradePreview:
         app.client = lambda overrides=None: client
         post(base, "/api/missing/fetch", {"machines": data["fetch"]})
         assert len(client.included[-1]) == len(data["fetch"])
+
+
+class TestAnUpgradeAsksTheTargetRelease:
+    """A game MAME fixed joins the library on an upgrade; one it broke leaves.
+
+    Between 0.282 and 0.289, 44 machines went from "does not work" to working --
+    Daytona USA, Cyber Sled, Dead or Alive. The preview compared only what the
+    library already held, and so could never name one of them.
+    """
+
+    @pytest.fixture
+    def ready(self, server, xml_path, catlist_path, monkeypatch, tmp_path):
+        base, app = planned_server(server, xml_path, catlist_path)
+        here = tmp_path / "old.xml"
+        there = tmp_path / "new.xml"
+        here.write_text(_statusxml({"goodgame": ("aa", "good"), "impgame": ("bb", "good"),
+                                    "fixedgame": ("cc", "preliminary")}))
+        there.write_text(_statusxml({"goodgame": ("aa", "good"),
+                                     "impgame": ("bb", "preliminary"),
+                                     "fixedgame": ("cc", "good"),
+                                     "brandnew": ("dd", "good")}))
+        from marquee.web import application as app_module
+        monkeypatch.setattr(app_module.fetch, "fetch_xml",
+                            lambda version, **kw: str(here if version == "0.282" else there))
+        monkeypatch.setattr(app_module.fetch, "fetch_support_file",
+                            lambda name, version, **kw: catlist_path)
+        app.releases["data"] = [
+            {"kind": "roms", "version": v, "variant": "non-merged", "full_set": True,
+             "name": f"MAME {v} ROMs (non-merged)", "infohash": f"b{i}" + "0" * 38,
+             "magnet": f"magnet:?xt=urn:btih:b{i}" + "0" * 38,
+             "from_version": None, "datfile": None}
+            for i, v in enumerate(("0.282", "0.289"))]
+        post(base, "/api/save", {"mame_version": "0.282"})
+        return base, app
+
+    def preview(self, base):
+        post(base, "/api/upgrade/preview", {"version": "0.289"})
+        for _ in range(200):
+            payload = get(base, "/api/upgrade")
+            if not payload["running"]:
+                assert payload["data"], payload["error"]
+                return payload["data"]
+            time.sleep(0.05)
+        raise AssertionError("the preview never finished")
+
+    def test_a_game_that_now_runs_is_fetched(self, ready):
+        data = self.preview(ready[0])
+        assert data["now_working"] == 1
+        assert [row["name"] for row in data["now_working_examples"]] == ["fixedgame"]
+        assert "fixedgame" in data["fetch"]
+
+    def test_a_driver_new_in_the_release_is_fetched(self, ready):
+        data = self.preview(ready[0])
+        assert data["new"] == 1 and "brandnew" in data["fetch"]
+
+    def test_a_game_that_stopped_running_leaves_and_is_not_fetched(self, ready):
+        data = self.preview(ready[0])
+        assert data["leaving"] >= 1
+        assert "impgame" in [row["name"] for row in data["leaving_examples"]]
+        assert "impgame" not in data["fetch"]
+
+    def test_the_fetch_asks_the_release_it_was_priced_against(self, ready):
+        base, app = ready
+        data = self.preview(base)
+        client = FakeClient(data["fetch"], present=False)
+        app.client = lambda overrides=None: client
+        post(base, "/api/missing/fetch", {"machines": data["fetch"], "version": "0.282"})
+        magnet = client.added[-1][0][0]
+        assert "btih:b0" in magnet, "the newest set was fetched from instead"
+        with pytest.raises(urllib.error.HTTPError) as error:
+            post(base, "/api/missing/fetch", {"machines": data["fetch"], "version": "0.100"})
+        assert error.value.code == 400
+
+
+class TestTheSplit:
+    def test_each_kind_lands_where_it_belongs(self):
+        from marquee.web.releases import upgrade_split
+        then = {"kept": {"sig": "a", "st": "good"}, "moved": {"sig": "a", "st": "good"},
+                "fixed": {"sig": "f", "st": "preliminary", "em": "preliminary"},
+                "never": {"sig": "n", "st": "good"}, "broke": {"sig": "b", "st": "good"}}
+        there = {"kept": {"sig": "a"}, "moved": {"sig": "z"}, "fixed": {"sig": "f"},
+                 "never": {"sig": "n"}, "fresh": {"sig": "x"}}
+        wanted = {name: None for name in ("kept", "moved", "fixed", "never", "fresh")}
+        split = upgrade_split({"kept", "moved", "broke"}, wanted, then, there)
+        assert split == {"unchanged": ["kept"], "changed": ["moved"],
+                         "now_working": ["fixed"], "new": ["fresh"],
+                         "missing": ["never"], "leaving": ["broke"]}
+
+
+def _statusxml(machines):
+    body = "".join(
+        f'<machine name="{name}"><description>{name}</description>'
+        f'<driver status="{status}" emulation="{status}"/><display type="raster"/>'
+        f'<rom name="{name}.bin" size="8" sha1="{digest}"/></machine>'
+        for name, (digest, status) in machines.items())
+    return f'<?xml version="1.0"?><mame build="0.289 (mame0289)">{body}</mame>'
 
 
 def _listxml(machines):

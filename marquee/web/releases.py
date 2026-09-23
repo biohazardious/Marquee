@@ -1,11 +1,13 @@
 """What has been published: Marquee's own releases, MAME's, and moving a library between them."""
+import dataclasses
 import json
 import os
 import re
 import time
 import urllib.request
 
-from .. import __version__, acquire, acquisition, fetch, indexers, manifest
+from .. import __version__, acquisition, fetch, indexers, manifest, pipeline
+from ..reporting import Reporter
 from ..errors import MarqueeError
 
 
@@ -155,9 +157,15 @@ class ReleasesMixin:
     def preview_upgrade(self, body):
         """What moving the library to another release would actually cost.
 
-        The whole thesis: 0.282 -> 0.289 changes 244 of the wanted machines and adds
-        877, which is 4.5 GB rather than the 163 GB of a full set. Seven releases cost
-        the same as one, because only the machines this library keeps are considered.
+        The whole thesis: 0.282 -> 0.289 changes 244 of the wanted machines, which is
+        a few gigabytes rather than the 163 of a full set -- only the machines this
+        library keeps are considered.
+
+        "Keeps" is asked of the target release, not of the library. The filters are
+        re-run on its XML: a game MAME fixed (44 went from "does not work" to working
+        between 0.282 and 0.289 -- Daytona USA, Cyber Sled, Dead or Alive) joins the
+        selection, one it broke leaves it, and a driver new in that release is there
+        at all. Comparing only what the library already held saw none of that.
         """
         if self.upgrade["running"]:
             raise MarqueeError("Already working that out.")
@@ -168,32 +176,85 @@ class ReleasesMixin:
         target = (body or {}).get("version")
         if not target:
             raise MarqueeError("Which release should it move to?")
-        record = manifest.read(self.current_config().copy_path)
-        current = (record or {}).get("mame_version") or self.current_config().mame_version
+        config = self.current_config()
+        record = manifest.read(config.copy_path)
+        current = (record or {}).get("mame_version") or config.mame_version
         if not current:
             raise MarqueeError("This library does not say which release it holds.")
 
         # What the library holds, not what the source folder happens to hold: a
         # machine already at the destination with no zip in the torrent folder is
         # exactly the kind an upgrade is about.
-        wanted = [item.name for item in plan.library_items]
+        held = {item.name for item in plan.library_items}
 
         def work():
-            here = acquisition.signatures(fetch.fetch_xml(current))
-            there = acquisition.signatures(fetch.fetch_xml(target))
-            split = acquire.delta(here, there, wanted)
+            # The same settings, planned at the target release. Not compared with
+            # the library -- only which machines it would want is asked of it. A
+            # catlist for a release out this week often is not yet: the older one
+            # still sorts every machine it knows, which is all a preview needs.
+            target_plan, _resolution = pipeline.build_plan(
+                dataclasses.replace(config, mame_version=target),
+                pipeline.SourceOptions(version=target, compare_destination=False,
+                                       ignore_version_mismatch=True),
+                Reporter())
+            then = acquisition.records(fetch.fetch_xml(current))
+            there = acquisition.records(fetch.fetch_xml(target))
+            wanted = {item.name: item for item in target_plan.wanted}
+            split = upgrade_split(held, wanted, then, there)
+            describe = lambda names: [  # noqa: E731
+                {"name": name, "description": wanted[name].description
+                 if name in wanted else (there.get(name) or then.get(name) or {}).get("d", name)}
+                for name in names[:12]]
             self.upgrade["data"] = {
                 "from": current, "to": target,
                 "unchanged": len(split["unchanged"]),
                 "changed": len(split["changed"]),
-                "added": len(split["added"]),
-                "fetch": sorted(split["changed"] + split["added"]),
-                "examples": sorted(split["changed"])[:12],
+                "added": len(split["now_working"]) + len(split["new"]) + len(split["missing"]),
+                "now_working": len(split["now_working"]),
+                "new": len(split["new"]),
+                "missing": len(split["missing"]),
+                "leaving": len(split["leaving"]),
+                "fetch": sorted(split["changed"] + split["now_working"] + split["new"]
+                                + split["missing"]),
+                "examples": split["changed"][:12],
+                "now_working_examples": describe(split["now_working"]),
+                "new_examples": describe(split["new"]),
+                "leaving_examples": describe(split["leaving"]),
             }
 
         if not self._start(self.upgrade, work, data=None, error=None, to=target):
             raise MarqueeError("Already working that out.")
         return {"started": True, "from": current, "to": target}
+
+
+def works(record):
+    """Whether MAME says a machine runs, the way the not-working filter decides it."""
+    return (record or {}).get("st") == "good" or (record or {}).get("em") == "good"
+
+
+def upgrade_split(held, wanted, then, there):
+    """Sort a move between releases into what it means for this library.
+
+    `held` is what the library has, `wanted` what the target selection wants, and
+    `then` / `there` the two releases' machine records (content signature `sig`,
+    driver status `st`, emulation `em`).
+    """
+    out = {key: [] for key in ("unchanged", "changed", "now_working", "new",
+                               "missing", "leaving")}
+    for name in sorted(wanted):
+        if name in held:
+            same = (then.get(name) or {}).get("sig") == (there.get(name) or {}).get("sig")
+            out["unchanged" if same else "changed"].append(name)
+        elif name not in then:
+            out["new"].append(name)
+        elif not works(then[name]):
+            out["now_working"].append(name)
+        else:
+            # In the old release and running there, just not in the library: never
+            # fetched, or a filter that no longer drops it.
+            out["missing"].append(name)
+    out["leaving"] = sorted(name for name in held if name not in wanted)
+    return out
 
 
 def newest_version(tag_names):

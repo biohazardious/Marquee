@@ -600,6 +600,12 @@ export async function open(name) {
     el('div', { class: 'scroll' },
       artFor(m),
       el('div', { class: 'rowflex', style: 'margin-bottom:16px' }, badges(m)),
+      // Unticked on Selection, or dropped by a filter: still in the release, so
+      // everything the XML says is here -- with why it is not in the library.
+      m.left_out
+        ? el('div', { class: 'banner info', style: 'margin-bottom:16px' },
+            `Not in the library: ${m.reason_label || 'left out'}.`)
+        : null,
       el('dl', { class: 'facts' },
         fact('Year', m.year),
         fact('Manufacturer', m.manufacturer),
@@ -612,8 +618,9 @@ export async function open(name) {
         fact('Checked', checkedText(m)),
         fact('Parent', m.parent ? el('a', { href: '#', text: m.parent,
           onclick: (event) => { event.preventDefault(); open(m.parent); } }) : ''),
-        fact('Goes to', el('span', { class: 'mono', text: m.folder })),
-        fact('Total size', m.bytes_human),
+        fact(m.left_out ? 'Would go to' : 'Goes to', el('span', { class: 'mono', text: m.folder })),
+        // A game nothing has priced yet reads 0 B, which is not its size.
+        fact('Total size', m.bytes ? m.bytes_human : ''),
         fact('Signature', el('span', { class: 'mono dim', text: m.signature })),
       ),
       // Only what is nowhere yet. `missing_disks` means "not in the torrent folder",
@@ -622,7 +629,9 @@ export async function open(name) {
         ? el('div', { class: 'banner warn' },
             `${plural(m.disks_to_fetch.length, 'disk', 'disks')} not downloaded yet: ${m.disks_to_fetch.join(', ')}`)
         : null,
-      filesTable(m),
+      // A game the library does not take has nothing to copy, and "none of its files
+      // are on disk yet" would read as something to fix.
+      m.left_out && !(m.files || []).length ? null : filesTable(m),
       m.clones && m.clones.length ? clonesBlock(m) : null));
 }
 

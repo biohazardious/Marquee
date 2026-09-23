@@ -710,8 +710,46 @@ def _library_files(plan, item):
 
 
 def machine_detail(plan, name, sizes=None):
-    """Everything known about one machine, plus its file list."""
+    """Everything known about one machine, plus its file list.
+
+    Not only the library's: a game unticked on the Selection page or dropped by a
+    filter is still in the release, and clicking it said "No machine named 'pgs268'".
+    Those come back with what the XML says about them and why they are out.
+    """
     sizes = sizes or {}
+    found = _wanted_detail(plan, name, sizes)
+    if found is not None:
+        return found
+    left_out = getattr(plan, "left_out", None)
+    for pool, why in ((getattr(plan, "excluded_items", ()), "excluded"),
+                      (left_out.wanted if left_out is not None else (), None)):
+        for item in pool:
+            if item.name == name:
+                return _set_aside_detail(plan, pool, item, why, sizes)
+    return None
+
+
+def _set_aside_detail(plan, pool, item, why, sizes):
+    """A machine the library does not take: what it is, and why it stays out."""
+    row = machine_row(item, "", size=None if item.total_bytes else sizes.get(item.name, 0))
+    reason = item.reason or why or ""
+    row["left_out"] = True
+    row["reason"] = reason
+    row["reason_label"] = ("Left out on the Selection page" if reason == "excluded"
+                           else REASON_LABELS.get(reason, reason.replace("-", " ")))
+    row["files"] = [{"source": source, "destination": relpath,
+                     "bytes": size, "bytes_human": human_bytes(size)}
+                    for source, relpath, size in item.files()]
+    row["library_files"] = []
+    row["signature"] = item.signature
+    family = item.cloneof or item.name
+    row["parent"] = item.cloneof
+    row["clones"] = sorted(other.name for other in list(pool) + list(plan.wanted)
+                           if other.cloneof == family and other.name != item.name)[:40]
+    return row
+
+
+def _wanted_detail(plan, name, sizes):
     statuses = machine_status(plan)
     for item in plan.wanted:
         if item.name != name:

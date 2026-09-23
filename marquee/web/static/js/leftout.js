@@ -11,6 +11,7 @@ import { icon } from './icons.js';
 import { $, append, badges, clear, count, debounce, el, plural } from './util.js';
 import { INDENT, branchRow, keepingFocus } from './tree.js';
 import { api, machines as fetchMachines, post, refresh } from './api.js';
+import { open as openGame } from './library.js';
 
 const ROWS = 500;
 
@@ -104,7 +105,13 @@ function gameRow(m, depth) {
     style: `padding-left:${INDENT[Math.min(depth, 3)]}px`,
   },
     el('span', { class: 'twist' }),
-    el('span', { class: 'name' },
+    // The name opens the game, the way it does on Selection and Library.
+    el('span', { class: 'name link', title: 'Details', role: 'link', tabindex: '0',
+                 'aria-label': `Details of ${m.description}`,
+                 onclick: () => openGame(m.name),
+                 onkeydown: (event) => {
+                   if (event.key === 'Enter') { event.preventDefault(); openGame(m.name); }
+                 } },
       el('span', { text: m.description }),
       el('small', { text: m.name })),
     // Without the sync state: every one of these is absent by definition, and a

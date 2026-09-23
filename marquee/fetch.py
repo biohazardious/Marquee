@@ -141,17 +141,30 @@ def fetch_xml(version, timeout=600, refresh=False, reporter=None):
         return destination
 
     history = _commit_history(repo=DATS_REPO, path=XML_PATH, tag="dats")
-    sha = next((commit for candidate, commit in history if candidate == version), None)
-    if sha is None:
+    shas = [commit for candidate, commit in history if candidate == version]
+    if not shas:
         known = sorted({v for v, _ in history}, key=float)
         raise SourceNotFoundError(
             f"No MAME {version} listxml is published. Available: "
             f"{', '.join(known)}. Supply one with --xml, or generate it with "
             f"mame -listxml.")
 
-    url = f"https://raw.githubusercontent.com/{DATS_REPO}/{sha}/{urllib.parse.quote(XML_PATH)}"
     reporter.info(f"Downloading the MAME {version} XML (about 80 MB)...")
-    payload = _request(url, timeout)
+    payload = None
+    for sha in shas:
+        url = f"https://raw.githubusercontent.com/{DATS_REPO}/{sha}/{urllib.parse.quote(XML_PATH)}"
+        try:
+            payload = _request(url, timeout)
+            break
+        except SourceNotFoundError as error:
+            # A commit that names the release can be the one that took the file
+            # away: 0.287's does, and its raw URL answers 404.
+            if "HTTP 404" not in str(error):
+                raise
+    if payload is None:
+        raise SourceNotFoundError(
+            f"The archive names MAME {version}, but its listxml is not there to "
+            f"download. Supply one with --xml, or generate it with mame -listxml.")
 
     os.makedirs(os.path.dirname(destination), exist_ok=True)
     partial = destination + ".part"
