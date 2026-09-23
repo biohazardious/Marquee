@@ -50,6 +50,7 @@ class SyncReport:
     # Free space behind the destination when it was read, where the protocol can say.
     # A share cannot be measured with disk_usage from here.
     free_bytes: int = None
+    disk_bytes: int = None
 
     def of(self, kind):
         return [action for action in self.actions if action.kind == kind]

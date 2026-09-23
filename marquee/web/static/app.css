@@ -602,6 +602,8 @@ ul.health li.bad .ico { color: var(--bad); }
 ul.health li.off .ico { color: var(--dim); }
 .bar.bad > i { background: var(--bad); }
 .big-stat b.bad { color: var(--bad); }
+.bar.warn > i { background: var(--warn); }
+.big-stat b.warn { color: var(--warn); }
 
 /* ---------------- activity steps ---------------- */
 

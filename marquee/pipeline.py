@@ -406,11 +406,11 @@ def _left_out(rejects, catlist, config, rom_dir, chd_dir, reporter, progress=Non
     return plan
 
 
-def _free_space(backend):
-    """What the backend can say about the room left -- never a reason the library
-    could not be read."""
+def _disk_space(backend):
+    """(free, size) of the disk behind a share, where the backend can say -- never
+    a reason the library could not be read."""
     try:
-        return backend.free_space()
+        return backend.disk_space()
     except Exception:  # noqa: BLE001 - see above
         return None
 
@@ -456,7 +456,7 @@ def compare_destination(built, config, reporter=None):
         # The record of a library on a share is read here, on a connection that is
         # open anyway; the pages read it from memory after this.
         manifest.load(config.copy_path, backend)
-        free = _free_space(backend) if backends.is_remote(config.copy_path) else None
+        space = _disk_space(backend) if backends.is_remote(config.copy_path) else None
     except Exception as error:  # noqa: BLE001 - a destination that cannot be read is
         # not fatal; the run simply cannot tell moves from new files.
         reporter.warn(f"Could not read the destination ({error}); "
@@ -464,7 +464,7 @@ def compare_destination(built, config, reporter=None):
         existing = {}
         leftovers = []
         empty = []
-        free = None
+        space = None
     finally:
         if backend is not None:
             backend.close()
@@ -472,7 +472,7 @@ def compare_destination(built, config, reporter=None):
     report = sync.compare(built, existing)
     report.leftovers = leftovers
     report.empty_folders = empty
-    report.free_bytes = free
+    report.free_bytes, report.disk_bytes = space or (None, None)
     reporter.info(
         f"{report.counts[sync.KEEP]} already there, {report.counts[sync.NEW]} new, "
         f"{report.counts[sync.UPDATE]} changed, {report.counts[sync.MOVE]} moved, "

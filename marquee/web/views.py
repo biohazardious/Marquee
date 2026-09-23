@@ -860,7 +860,7 @@ def describe(plan, config, cache=None, sizes=None):
     plan, whether it has been compared against the destination, and where it is
     going.
     """
-    from ..plan import check_free_space
+    from ..plan import check_free_space, disk_size
 
     # Not id(plan.sync): CPython reuses the id of a freed object, so a second
     # comparison could land on the same address and read back the first one's answer.
@@ -932,10 +932,15 @@ def describe(plan, config, cache=None, sizes=None):
         payload["empty_folders"] = len(getattr(plan.sync, "empty_folders", None) or ())
     if space:
         needed, free = space
+        payload["needed"], payload["free"] = needed, free
         payload["needed_human"] = human_bytes(needed)
         payload["free_human"] = human_bytes(free)
         payload["fits"] = needed <= free
         payload["short_human"] = human_bytes(max(needed - free, 0))
+        total = disk_size(plan, config.copy_path)
+        if total:
+            payload["disk_human"] = human_bytes(total)
+            payload["disk_used_percent"] = round((1 - free / total) * 100)
 
     if cache is not None:
         cache["key"], cache["payload"] = key, payload

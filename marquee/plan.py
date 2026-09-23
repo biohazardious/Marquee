@@ -556,6 +556,23 @@ def bytes_already_present(plan, copy_path):
     return present
 
 
+def disk_size(plan, copy_path):
+    """How big the library's disk is, where that is known -- what turns "53.8 GB free"
+    into "99% full"."""
+    if backends.is_remote(copy_path):
+        return getattr(getattr(plan, "sync", None), "disk_bytes", None) or None
+    probe = copy_path
+    while probe and not os.path.isdir(probe):
+        parent = os.path.dirname(probe.rstrip(os.sep))
+        if parent == probe:
+            return None
+        probe = parent
+    try:
+        return shutil.disk_usage(probe).total if probe else None
+    except OSError:
+        return None
+
+
 def check_free_space(plan, copy_path):
     """(needed, free) in bytes, or None when unknowable.
 

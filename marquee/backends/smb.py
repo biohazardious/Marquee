@@ -558,13 +558,12 @@ class RemoteCopy(CopyBackend):
                                f"{_brief(error)}") from error
         self._listing_cache.clear()
 
-    def free_space(self):
+    def disk_space(self):
         try:
-            found = _query_free_space(self.conn, self.share_name,
-                                      self.remote_path.strip("/"))
+            return _query_free_space(self.conn, self.share_name,
+                                     self.remote_path.strip("/"))
         except Exception:  # noqa: BLE001 - see _query_free_space
             return None
-        return found[0] if found else None
 
     def remove_folder(self, relpath):
         # The server refuses a folder with anything in it (STATUS_DIRECTORY_NOT_EMPTY).

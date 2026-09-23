@@ -284,28 +284,36 @@ function spacePanel(data) {
     body.append(el('div', { class: 'muted', text: plan
       ? 'This library\u2019s server does not say how much room is left (FTP cannot). Check the console\u2019s disk before a large transfer.'
       : 'Build a plan to see what the next transfer needs.' }));
+  } else if (!plan.needed) {
+    // Nothing to write: the question is how full the disk already is. A large "0 B"
+    // over an empty bar said nothing about a disk that was 99% full.
+    const used = plan.disk_used_percent;
+    const tight = used !== undefined && used >= 90;
+    append(body,
+      el('div', { class: 'big-stat' },
+        el('b', { class: tight ? 'warn' : '', text: plan.free_human }),
+        el('span', { class: 'muted', text: plan.disk_human
+          ? `free of ${plan.disk_human} · ${used}% full` : 'free' })),
+      used !== undefined
+        ? el('div', { class: `bar ${tight ? 'warn' : ''}` }, el('i', { style: `width:${used}%` }))
+        : null,
+      el('div', { class: 'hint', text: tight
+        ? 'Nothing to write in the next transfer, but the library\u2019s disk is nearly full. A new release needs room for the games that changed.'
+        : 'Nothing to write in the next transfer.' }));
   } else {
-    const needed = parseBytes(plan.needed_human);
-    const free = parseBytes(plan.free_human);
-    const share = free ? Math.min(100, Math.round((needed / free) * 100)) : 0;
+    const share = plan.free ? Math.min(100, Math.round((plan.needed / plan.free) * 100)) : 100;
     append(body,
       el('div', { class: 'big-stat' },
         el('b', { class: plan.fits ? '' : 'bad', text: plan.needed_human }),
-        el('span', { class: 'muted', text: `to write · ${plan.free_human} free` })),
+        el('span', { class: 'muted', text: `to write · ${plan.free_human} free`
+          + (plan.disk_human ? ` of ${plan.disk_human}` : '') })),
       el('div', { class: `bar ${plan.fits ? '' : 'bad'}` }, el('i', { style: `width:${share}%` })),
       el('div', { class: 'hint', text: plan.fits
         ? `${share}% of the free space on the library's disk.`
         : `Short by ${plan.short_human}. Free some space or leave more out.` }));
   }
   return el('div', { class: 'panel' }, el('h2', {}, 'Space',
-    el('span', { class: 'sub', text: 'for the next transfer' })), body);
-}
-
-/* The figures arrive pre-formatted for the page; for one bar the ratio is enough. */
-function parseBytes(text) {
-  const match = /([\d.]+)\s*(B|KB|MB|GB|TB)/.exec(text || '');
-  if (!match) return 0;
-  return parseFloat(match[1]) * (1024 ** ['B', 'KB', 'MB', 'GB', 'TB'].indexOf(match[2]));
+    el('span', { class: 'sub', text: 'on the library\u2019s disk' })), body);
 }
 
 function historyPanel(data) {

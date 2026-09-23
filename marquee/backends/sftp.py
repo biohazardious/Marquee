@@ -231,13 +231,14 @@ class SftpCopy(CopyBackend):
         except FAILURES:
             pass
 
-    def free_space(self):
+    def disk_space(self):
         # statvfs@openssh.com: OpenSSH has it, a good many other servers do not.
         try:
             stat = self.conn.statvfs(self.root)
         except Exception:  # noqa: BLE001 - unsupported is simply unknown
             return None
-        return stat.f_bavail * (stat.f_frsize or stat.f_bsize)
+        unit = stat.f_frsize or stat.f_bsize
+        return stat.f_bavail * unit, getattr(stat, "f_blocks", 0) * unit
 
     def remove_folder(self, relpath):
         try:

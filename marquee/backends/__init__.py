@@ -125,10 +125,14 @@ class CopyBackend:
     folders = ()
     occupied = ()
 
-    def free_space(self):
-        """Bytes free on the disk behind the destination, for this user, or None
+    def disk_space(self):
+        """(bytes free for this user, disk size) behind the destination, or None
         when the protocol cannot say (FTP has no such question)."""
         return None
+
+    def free_space(self):
+        space = self.disk_space()
+        return space[0] if space else None
 
     def remove_folder(self, relpath):
         """Remove one folder if, and only if, it is empty. Returns whether it went.

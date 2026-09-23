@@ -128,7 +128,7 @@ class FolderSftp:
             raise IOError(str(error)) from error
 
     def statvfs(self, _remote):
-        return types.SimpleNamespace(f_bavail=10, f_frsize=4096, f_bsize=4096)
+        return types.SimpleNamespace(f_bavail=10, f_blocks=1000, f_frsize=4096, f_bsize=4096)
 
 
 class TestSftp:
@@ -161,6 +161,7 @@ class TestSftp:
     def test_free_space_from_statvfs(self, backend):
         handle, _root = backend
         assert handle.free_space() == 40960
+        assert handle.disk_space() == (40960, 4096000)
 
 
 class Entry:
@@ -245,6 +246,13 @@ class TestFreeSpaceBehindAShare:
         needed, free = planning.check_free_space(plan, "smb://nas/Batocera3/roms/mame/")
         assert free == 54 * 2**30
         assert needed == plan.sync.to_transfer
+
+    def test_how_full_the_disk_is_comes_with_it(self):
+        """53.8 GB free said nothing until it was "of 3.6 TB, 99% full"."""
+        plan = self.plan_with(free=54 * 2**30, to_transfer=0)
+        plan.sync.disk_bytes = 3600 * 2**30
+        assert planning.disk_size(plan, "smb://nas/Batocera3/roms/mame/") == 3600 * 2**30
+        assert planning.disk_size(self.plan_with(free=1, to_transfer=0), "ftp://nas/r") is None
 
     def test_a_share_that_could_not_say_is_unknown(self):
         plan = self.plan_with(free=None, to_transfer=2**30)

@@ -336,12 +336,13 @@ class LocalCopy(CopyBackend):
         self._copy_whole(source, target)
         return True
 
-    def free_space(self):
+    def disk_space(self):
         import shutil
         try:
-            return shutil.disk_usage(self.copy_path).free
+            usage = shutil.disk_usage(self.copy_path)
         except OSError:
             return None
+        return usage.free, usage.total
 
     def remove_folder(self, relpath):
         try:
