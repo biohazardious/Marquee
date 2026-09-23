@@ -136,6 +136,9 @@ class Job:
         def prepare():
             self._reset_locked()
             self.config = config
+            # Kept for a plan taken again on the same terms -- an ignore that has to
+            # re-plan must not lose the XML and catlist this one was built from.
+            self.options = options
             self.planned_at = time.time()
 
         def work():
@@ -168,6 +171,46 @@ class Job:
                 plan.sync = pipeline.compare_destination(plan, config, reporter)
             except MarqueeError as error:
                 reporter.warn(f"Could not re-check what the library holds: {error}")
+
+    def apply_ignore(self, config):
+        """Take what the ignore list now covers out of the plan's diff, in place.
+
+        Returns (deletions taken out, whether only a new plan can say the rest). A
+        file the diff was going to move *from* cannot be dropped in place -- the game
+        it was moving to then needs a copy instead -- so that asks for a new plan,
+        and so does a plan that is not compared yet. The plan takes the new settings
+        as its own, since it now is what they would have built.
+        """
+        from .. import ignore as ignoring
+        compiled = ignoring.patterns(config.ignore_paths)
+        with self._lock:
+            if self.busy:
+                raise MarqueeError("A job is running; the ignore list applies once it "
+                                   "has finished and the plan is built again.")
+            plan = self.plan
+            if plan is None:
+                return 0, False
+            self.config = config
+            self._described = {}
+            report = plan.sync
+            if report is None:
+                return 0, True
+            wanted = pipeline.wanted_paths(plan)
+            covered = lambda path: path not in wanted and ignoring.matches(path, compiled)  # noqa: E731
+            if any(action.kind == sync.MOVE and covered(action.from_relpath)
+                   for action in report.actions) \
+                    or any(covered(path) for path in report.leftovers or ()):
+                return 0, True
+            gone = [action for action in report.actions
+                    if action.kind == sync.ORPHAN and covered(action.relpath)]
+            if gone:
+                gone_ids = {id(action) for action in gone}
+                report.actions = [action for action in report.actions
+                                  if id(action) not in gone_ids]
+                report.ignored = sorted(set(getattr(report, "ignored", []) or [])
+                                        | {action.relpath for action in gone})
+                sync._tally(report)
+            return len(gone), False
 
     def start_check(self, xml_file, deep=False, pieces=None):
         """Check what the library holds against the release it is supposed to be.

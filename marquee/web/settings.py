@@ -1,7 +1,7 @@
 """settings.ini as the page sees it: reading, merging, saving, and the library it names."""
 import os
 
-from .. import backends, manifest
+from .. import backends, ignore, manifest, pipeline
 from .. import config as configuration
 from ..errors import MarqueeError
 from .downloads import _filters
@@ -151,6 +151,7 @@ class SettingsMixin:
             "blacklist_genres": config.blacklist_genres,
             "blacklist_categories": config.blacklist_categories,
             "blacklist_roms": config.blacklist_roms,
+            "ignore_paths": config.ignore_paths,
             "settings_path": self.settings_path,
             "mame_version": config.mame_version,
             "download_client": config.download_client or "",
@@ -205,6 +206,11 @@ class SettingsMixin:
         for key in ("blacklist_genres", "blacklist_categories", "blacklist_roms"):
             if isinstance(body.get(key), list):
                 overrides[key] = body[key]
+        if isinstance(body.get("ignore_paths"), list):
+            if not all(isinstance(entry, str) for entry in body["ignore_paths"]):
+                raise MarqueeError("ignore_paths should be a list of paths.")
+            overrides["ignore_paths"] = [entry.strip() for entry in body["ignore_paths"]
+                                         if entry.strip()]
         # The chosen version belongs to the configuration too: it is what gets saved and
         # what the destination's record ends up naming.
         version = (body.get("mame_version") or "").strip() if "mame_version" in body else None
@@ -233,6 +239,40 @@ class SettingsMixin:
                 raise MarqueeError(f"Still missing: {', '.join(missing)}")
             configuration.write_settings_file(self.settings_path, config)
         return {"saved": self.settings_path}
+
+    def ignore(self, body):
+        """Add paths to the ignore list, and take them out of the plan in hand.
+
+        The Transfer page's "Ignore" on a file in the delete list. Saved like any
+        setting, and applied to the diff at once rather than by planning again, which
+        over a share is a minute of listing to drop one line.
+        """
+        wanted = [entry.strip() for entry in ((body or {}).get("paths") or [])
+                  if isinstance(entry, str) and entry.strip()]
+        if not wanted:
+            raise MarqueeError("Name the files to leave alone.")
+        if self.job.busy:
+            # Nothing saved either: a transfer or a check in flight would act on the
+            # list it started with, and a check re-diffing afterwards would bring the
+            # deletions back.
+            raise MarqueeError("A job is running; ignore these once it has finished.")
+        with self._settings_lock:
+            config = self.current_config()
+            listed = list(config.ignore_paths or [])
+            known = set(ignore.patterns(listed))
+            for entry in wanted:
+                if ignore.normalize(entry) not in known:
+                    listed.append(entry)
+                    known.add(ignore.normalize(entry))
+            config = config.with_overrides(ignore_paths=listed)
+            configuration.write_settings_file(self.settings_path, config)
+        taken, replan = self.job.apply_ignore(config)
+        if replan and self.job.plan is not None:
+            # A move out of an ignored file, or a plan never compared: only a new
+            # plan can say what the next transfer does now -- on the same terms.
+            self.job.start_plan(config, getattr(self.job, "options", None)
+                                or pipeline.SourceOptions(newest_published=self.newest_published))
+        return {"ignored": taken, "patterns": len(listed), "replanning": replan}
 
     def _saved_since(self, moment):
         """Whether settings.ini was written after `moment` (a time.time())."""

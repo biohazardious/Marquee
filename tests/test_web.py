@@ -2771,3 +2771,23 @@ class TestAFirstPlanWithAnEmptyTorrentFolder:
         monkeypatch.setattr(pipeline.sources, "locate_set", lambda *a, **k: "/empty")
         assert pipeline.resolve_mame_xml(config, options, pipeline.Reporter()) == "/nowhere.xml"
         assert asked == ["0.289"]
+
+
+class TestACrossSitePostWithNoBody:
+    """`fetch(url, {method: "POST", mode: "no-cors"})` from any page sends no body and
+    no JSON content type. On a keyless localhost server it used to start a transfer."""
+
+    def test_it_is_refused_before_anything_runs(self, server):
+        base, app = server
+        request = urllib.request.Request(base + "/api/copy", data=b"", method="POST")
+        with pytest.raises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(request, timeout=10)
+        assert error.value.code == 400
+        assert app.job.state == "idle"
+
+    def test_the_page_s_own_empty_post_still_works(self, server):
+        base, _app = server
+        request = urllib.request.Request(base + "/api/cancel", data=b"", method="POST",
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            assert response.status == 200

@@ -394,6 +394,10 @@ about what you have, not only a place to put things.
   Batocera's 0.285 that was 714 and 67 of 10,022 — the other 9,241 run as they are,
   since MAME finds a ROM by CRC. Nothing is copied or deleted: they move by rename,
   and move back when the console catches up.
+- **An ignore list** for what is in the library but not Marquee's — a BIOS pack's
+  `neogeo.zip`, `pgm.zip` and friends at the top level, for the older libretro cores.
+  Never deleted, moved or counted. `*.zip` covers every zip at the top level and
+  nothing below it; the Transfer page's delete list adds files with one click.
 
 ### Acquisition
 

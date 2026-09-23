@@ -28,13 +28,16 @@ DEFAULT_FOLDERS = {NEWER: "ZZ-Version-Mismatch", MISSING: "ZZ-Missing-ROM"}
 
 
 def media(xml_file):
-    """{machine: [{crc: rom name}, {sha1: disk name}]} for one release, cached.
+    """{machine: [{crc: rom name}, {sha1: disk name}, [devices]]} for one release, cached.
 
     Only what can be checked: a ROM or disk with no dump has nothing to compare.
+    Devices are named so their ROMs can be counted too: a non-merged zip carries
+    them (galaga.zip holds namco51's 51xx.bin), and a device ROM redumped between
+    two releases stops the game as surely as one of its own.
     """
     stat = os.stat(xml_file)
     cache = os.path.join(sources.cache_dir(), "console",
-                         f"{os.path.basename(xml_file)}-{stat.st_size}-{int(stat.st_mtime)}.json")
+                         f"v2-{os.path.basename(xml_file)}-{stat.st_size}-{int(stat.st_mtime)}.json")
     try:
         with open(cache, encoding="utf-8") as handle:
             return json.load(handle)
@@ -48,7 +51,9 @@ def media(xml_file):
                 if rom.get("crc") and rom.get("status") != "nodump"}
         disks = {disk.get("sha1").lower(): disk.get("name") for disk in element.iter("disk")
                  if disk.get("sha1") and disk.get("status") != "nodump"}
-        found[element.get("name")] = [roms, disks]
+        devices = sorted({ref.get("name") for ref in element.iter("device_ref")
+                          if ref.get("name")})
+        found[element.get("name")] = [roms, disks, devices]
         element.clear()
     try:
         atomic.write_json(cache, found)
@@ -68,13 +73,23 @@ def classify(set_media, console_media, names):
         if wants is None:
             out[name] = (NEWER, [])
             continue
-        has = set_media.get(name) or [{}, {}]
-        lacking = sorted([rom for crc, rom in wants[0].items() if crc not in has[0]]
+        has = set_media.get(name) or [{}, {}, []]
+        want_roms = _with_devices(wants, console_media)
+        has_roms = _with_devices(has, set_media)
+        lacking = sorted([rom for crc, rom in want_roms.items() if crc not in has_roms]
                          + [f"{disk}.chd" for sha1, disk in wants[1].items()
                             if sha1 not in has[1]])
         if lacking:
             out[name] = (MISSING, lacking)
     return out
+
+
+def _with_devices(entry, release):
+    """A machine's ROMs by CRC, with the ROMs of every device it names."""
+    roms = dict(entry[0])
+    for device in (entry[2] if len(entry) > 2 else ()):
+        roms.update((release.get(device) or [{}])[0])
+    return roms
 
 
 def folder_for(kind, config):

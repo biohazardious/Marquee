@@ -31,6 +31,9 @@ export function values() {
     download_password: read('download_password'),
     download_dir: read('download_dir'),
     remote_path_mappings: $('remote_path_mappings')?.value,
+    ignore_paths: $('ignore_paths')
+      ? $('ignore_paths').value.split('\n').map((line) => line.trim()).filter(Boolean)
+      : undefined,
     hardlink: $('hardlink') ? { auto: 'auto', on: true, off: false }[$('hardlink').value] : undefined,
     parents_only: checked('parents_only'),
     write_gamelist: checked('write_gamelist'),
@@ -204,7 +207,17 @@ export function render() {
           el('input', { type: 'checkbox', id: 'allow_mature', checked: config.allow_mature }),
           el('span', {}, el('b', { text: 'Include adult titles' }),
             el('div', { class: 'hint', text: 'Filed under their own folder.' }))),
-        field('mature_rom_folder', 'Adult folder', null, config.mature_rom_folder))),
+        field('mature_rom_folder', 'Adult folder', null, config.mature_rom_folder),
+        el('label', { class: 'fld' },
+          el('span', {}, 'Leave alone in the library',
+            el('em', { text: ' — one path or pattern per line' })),
+          el('textarea', { id: 'ignore_paths', placeholder: '*.zip' },
+            (config.ignore_paths || []).join('\n')),
+          el('div', { class: 'hint', text:
+            'Files Marquee must never delete, move or count \u2014 a BIOS pack\u2019s zips at '
+            + 'the top of the library, say. Paths start at the library\u2019s top; * and ? never '
+            + 'cross a folder, so *.zip is every zip at the top level and nothing below it. '
+            + 'The Transfer page\u2019s delete list can add files here too.' })))),
 
     el('div', { class: 'panel' },
       el('h2', {}, 'On the console',

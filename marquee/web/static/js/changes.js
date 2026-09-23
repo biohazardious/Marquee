@@ -164,6 +164,26 @@ function deletePanel(data) {
   const box = el('input', { type: 'checkbox' });
   box.checked = V.remove;
   box.onchange = () => { V.remove = box.checked; V.armed = false; render(); };
+  // Marquee never writes at the library's top level: what is there came from
+  // somewhere else -- a BIOS pack, most often -- and is one click from staying.
+  const top = data.top_level_deletions || [];
+  const notes = el('div', {},
+    top.length
+      ? el('div', { class: 'hint', style: 'margin:6px 0 0' },
+        `${plural(top.length, 'file sits', 'files sit')} at the library's top level, where Marquee never puts anything: `
+        + `${top.slice(0, 6).join(', ')}${top.length > 6 ? '…' : ''}. `,
+        ignoreButton(top, `Leave ${top.length === 1 ? 'it' : 'them'} alone`,
+          'Add them to the ignore list in Settings'))
+      : null,
+    data.ignored
+      ? el('div', { class: 'hint', style: 'margin:6px 0 0',
+        text: `${plural(data.ignored, 'file is', 'files are')} on the ignore list and left alone`
+          + ` (Settings): ${(data.ignored_examples || []).join(', ')}${data.ignored > 12 ? '…' : ''}.` })
+      : null);
+  return el('div', {}, deleteBox(entry, box), notes);
+}
+
+function deleteBox(entry, box) {
   return el('label', { class: 'check' }, box,
     el('span', {},
       el('b', { text: `Also delete the ${plural(entry.files, 'file', 'files')} nothing wants` }),
@@ -217,8 +237,27 @@ function fileRow(row) {
       el('small', { class: 'mono', text: row.path })),
     el('td', { class: 'muted', text: row.why }),
     el('td', {}),
-    el('td', {}),
+    el('td', {}, ignoreButton([row.path], 'Ignore',
+      'Never delete, move or count this file: it is added to the ignore list in Settings')),
     el('td', { class: 'num nowrap', text: row.bytes_human }));
+}
+
+/* Leave files alone from now on. Applied to the plan in hand at once -- replanning a
+   share to drop one line from the delete list is a minute of listing. */
+function ignoreButton(paths, text, title) {
+  const button = el('button', { class: 'btn sm ghost', text, title });
+  button.onclick = async (event) => {
+    event.stopPropagation();
+    button.disabled = true;
+    try {
+      await post('/api/ignore', { paths });
+      await load();
+    } catch (error) {
+      V.error = error.message;
+      render();
+    }
+  };
+  return button;
 }
 
 /* ---------------- the tree ---------------- */

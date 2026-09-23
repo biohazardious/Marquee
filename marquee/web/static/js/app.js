@@ -613,8 +613,12 @@ function renderPlanPill(data) {
   const moving = (plan.sync?.new?.count || 0) + (plan.sync?.update?.count || 0)
     + (plan.sync?.move?.count || 0);
   pill.className = `planpill ${moving ? 'good' : ''}`;
+  // Renames copy nothing: "0 B to transfer" over 782 of them read as nothing to do.
+  const copying = (plan.sync?.new?.count || 0) + (plan.sync?.update?.count || 0);
   append(pill, icon(moving ? 'transfer' : 'check'),
-    moving ? `${plan.to_transfer_human} to transfer` : 'Plan is current');
+    !moving ? 'Plan is current'
+      : copying ? `${plan.to_transfer_human} to transfer`
+        : `${plural(moving, 'file', 'files')} to move`);
 }
 
 function updateSelectionSummary() {
@@ -719,7 +723,7 @@ function dirty() {
     && path('missing_rom_folder')
     && flag('allow_mature') && flag('parents_only')
     && list('blacklist_genres') && list('blacklist_categories')
-    && list('blacklist_roms'));
+    && list('blacklist_roms') && list('ignore_paths'));
 }
 
 async function boot() {

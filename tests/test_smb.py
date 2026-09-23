@@ -258,6 +258,48 @@ class TestUploadsAreAllOrNothing:
         assert conn.stored == ["roms/Maze/galaga.zip"]
 
 
+    def test_a_replace_that_cannot_land_keeps_the_old_file(self, tmp_path):
+        """The old file used to be deleted first; a failed rename then took the
+        finished upload with it, and the gamelist's favourites were gone."""
+        from smb import smb_structs
+
+        class Refusing(FakeConnection):
+            def rename(self, share, old, new):
+                if old.endswith(".part"):
+                    raise smb_structs.OperationFailure("refused", [])
+                super().rename(share, old, new)
+
+        source = tmp_path / "gamelist.xml"
+        source.write_bytes(b"<gameList/>")
+        conn = Refusing({"roms": {"gamelist.xml": 5}})
+        copier = build("smb://u:p@nas/Share/roms", conn)
+        with pytest.raises(RemoteCopy.BackendError):
+            copier._store("roms/gamelist.xml", open(source, "rb"))
+        assert conn.renamed == [("roms/gamelist.xml", "roms/gamelist.xml.marquee-old"),
+                                ("roms/gamelist.xml.marquee-old", "roms/gamelist.xml")]
+        assert "roms/gamelist.xml" not in getattr(conn, "deleted", [])
+
+    def test_a_replace_moves_the_old_file_aside_then_drops_it(self, tmp_path):
+        source = tmp_path / "gamelist.xml"
+        source.write_bytes(b"<gameList/>")
+        conn = FakeConnection({"roms": {"gamelist.xml": 5}})
+        build("smb://u:p@nas/Share/roms", conn)._store("roms/gamelist.xml",
+                                                       open(source, "rb"))
+        assert conn.renamed[-1] == ("roms/gamelist.xml.part", "roms/gamelist.xml")
+        assert conn.deleted == ["roms/gamelist.xml.marquee-old"]
+
+    def test_no_session_left_is_a_backend_error_not_a_crash(self, tmp_path):
+        source = tmp_path / "galaga.zip"
+        source.write_bytes(b"rom")
+        copier = build("smb://u:p@nas/Share/roms", FakeConnection())
+        copier.conn = None
+
+        def cannot(*_args, **_kwargs):
+            raise RemoteCopy.BackendError("the share is gone")
+        copier._reconnect = cannot
+        with pytest.raises(RemoteCopy.BackendError):
+            copier._store("roms/Maze/galaga.zip", open(source, "rb"))
+
 class TestReadingAFileBack:
     """zipfile needs seek, tell and read; pysmb offers ranged fetches. SmbReadable is
     the adapter, and it must fetch only what is asked for."""

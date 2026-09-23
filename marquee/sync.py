@@ -47,6 +47,8 @@ class SyncReport:
     # Folders at the destination with nothing in them at all, deepest first. The next
     # transfer removes them. Found by the index, like the leftovers.
     empty_folders: list = field(default_factory=list)
+    # Paths the ignore list kept out of the diff (see marquee.ignore).
+    ignored: list = field(default_factory=list)
     # Free space behind the destination when it was read, where the protocol can say.
     # A share cannot be measured with disk_usage from here.
     free_bytes: int = None

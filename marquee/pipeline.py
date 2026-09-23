@@ -10,7 +10,7 @@ import posixpath
 import time
 from dataclasses import dataclass, field, replace
 
-from . import (backends, catalog, console, fetch, gamelist, manifest,
+from . import (backends, catalog, console, fetch, gamelist, ignore, manifest,
                plan as planning, sources, sync)
 from .errors import MarqueeError, SourceNotFoundError, VersionMismatchError
 from .reporting import Reporter
@@ -502,6 +502,11 @@ def tidy_folders(backend, candidates):
     return removed
 
 
+def wanted_paths(built):
+    """Every library path the selection asks for, whether or not it is there yet."""
+    return {relpath for item in built.wanted for relpath in item.wanted_paths()}
+
+
 def compare_destination(built, config, reporter=None):
     """Index the destination and work out what actually has to move."""
     reporter = reporter or Reporter()
@@ -530,14 +535,25 @@ def compare_destination(built, config, reporter=None):
         if backend is not None:
             backend.close()
 
+    # What the user has said is not Marquee's is not in the diff at all: never an
+    # orphan to delete, never a file to move from, never counted.
+    compiled = ignore.patterns(config.ignore_paths)
+    existing, ignored = ignore.split(existing, compiled,
+                                     wanted_paths(built) if compiled else set())
+    leftovers = [relpath for relpath in leftovers
+                 if not ignore.matches(relpath, compiled)]
     report = sync.compare(built, existing)
     report.leftovers = leftovers
-    report.empty_folders = empty
+    report.ignored = ignored
+    # A folder the list names is the user's too, empty or not.
+    report.empty_folders = [folder for folder in empty
+                            if not ignore.matches(folder, compiled)]
     report.free_bytes, report.disk_bytes = space or (None, None)
     reporter.info(
         f"{report.counts[sync.KEEP]} already there, {report.counts[sync.NEW]} new, "
         f"{report.counts[sync.UPDATE]} changed, {report.counts[sync.MOVE]} moved, "
-        f"{report.counts[sync.ORPHAN]} no longer wanted.")
+        f"{report.counts[sync.ORPHAN]} no longer wanted"
+        + (f", {len(ignored)} left alone by the ignore list." if ignored else "."))
     return report
 
 

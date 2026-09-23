@@ -191,14 +191,16 @@ class Handler(BaseHTTPRequestHandler):
             # A non-numeric or negative length used to be a 500 or a handler that sat
             # waiting on rfile.read(-1) until the client went away.
             raise MarqueeError("Bad Content-Length.")
-        if not length:
-            return {}
         content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip()
         if content_type.lower() != "application/json":
             # The one request shape a page on another origin can send without a
             # preflight is a form or text/plain POST -- and with no token on
             # localhost, that page could otherwise start a transfer or a download.
+            # Asked of an empty body too: `fetch(url, {method: "POST", mode:
+            # "no-cors"})` sends no body at all, and used to start a transfer.
             raise MarqueeError("Expected application/json.")
+        if not length:
+            return {}
         try:
             body = json.loads(self.rfile.read(length).decode("utf-8"))
         except ValueError as error:
@@ -364,6 +366,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         routes = {"/api/save": self.app.save, "/api/plan": self.app.plan,
+                  "/api/ignore": self.app.ignore,
                   "/api/copy": self.app.copy,
                   "/api/check": self.app.check, "/api/cancel": self.app.cancel,
                   "/api/survey": self.app.start_survey,

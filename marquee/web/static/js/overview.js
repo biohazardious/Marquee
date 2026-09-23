@@ -63,7 +63,10 @@ export function nextStep(data) {
              action: 'Open Selection', page: 'selection' };
   }
   if (transfer) {
-    return { tone: 'good', title: `${plan.to_transfer_human || ''} ready to go into the library`.trim(),
+    const copying = (plan.sync?.new?.count || 0) + (plan.sync?.update?.count || 0);
+    return { tone: 'good', title: copying
+      ? `${plan.to_transfer_human || ''} ready to go into the library`.trim()
+      : `${plural(transfer, 'file', 'files')} to move within the library`,
              text: `${plural(transfer, 'file', 'files')} are waiting to be copied, replaced or moved. See exactly which before it runs.`,
              action: 'Preview the transfer', page: 'changes' };
   }

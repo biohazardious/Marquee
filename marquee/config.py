@@ -45,6 +45,9 @@ class Config:
     # The finer level: "Shooter / Flying Vertical" rather than "Shooter".
     blacklist_categories: list = field(default_factory=list)
     blacklist_roms: list = field(default_factory=list)
+    # Paths in the library that are not Marquee's: never deleted, moved or counted.
+    # See marquee.ignore for the pattern rules.
+    ignore_paths: list = field(default_factory=list)
 
     # The MAME version the source romset is. Chosen once and remembered; both the XML
     # and the catlist are then fetched for exactly this release.
@@ -152,7 +155,8 @@ def read_settings_file(path):
 
     config.allow_mature = flag("allow_mature", True)
 
-    for key in ("blacklist_genres", "blacklist_categories", "blacklist_roms"):
+    for key in ("blacklist_genres", "blacklist_categories", "blacklist_roms",
+                "ignore_paths"):
         raw = values.get(key)
         if raw is None:
             continue
@@ -260,6 +264,11 @@ blacklist_categories = {blacklist_categories}
 
 blacklist_roms = {blacklist_roms}
 
+; Files in the library Marquee must leave alone -- a BIOS pack's zips at the top, say.
+; Paths from the library's top; * and ? never cross a folder, so '*.zip' is every zip
+; at the top level. Never deleted, moved or counted.
+ignore_paths = {ignore_paths}
+
 ; --- acquisition -----------------------------------------------------------
 ; Leave download_client empty to work only with a romset already on disk.
 {acquisition}"""
@@ -362,6 +371,7 @@ def write_settings_file(path, config):
         blacklist_genres=_format_list(config.blacklist_genres),
         blacklist_categories=_format_list(config.blacklist_categories),
         blacklist_roms=_format_list(config.blacklist_roms),
+        ignore_paths=_format_list(config.ignore_paths),
         acquisition=_acquisition_block(config))
     # Atomic: a save interrupted half-way must not leave a settings file that
     # cannot be read back.

@@ -540,6 +540,12 @@ def changes_payload(plan, kind="", query="", offset=0, limit=ROW_LIMIT, sizes=No
         # count alone does not say "your old Quiz folders".
         "empty_folders": len(getattr(report, "empty_folders", None) or ()),
         "empty_examples": list(getattr(report, "empty_folders", None) or ())[:12],
+        # Left out of the diff by the ignore list, and the deletions at the library's
+        # top level -- where a BIOS pack puts its zips -- which one click can leave alone.
+        "ignored": len(getattr(report, "ignored", None) or ()),
+        "ignored_examples": list(getattr(report, "ignored", None) or ())[:12],
+        "top_level_deletions": [action.relpath for action in report.of(sync.ORPHAN)
+                                if "/" not in action.relpath][:200],
     }
 
     chosen = kind if any(entry["kind"] == kind for entry in kinds) else ""
@@ -857,6 +863,7 @@ def built_from(config):
         "blacklist_genres": sorted(config.blacklist_genres or []),
         "blacklist_categories": sorted(config.blacklist_categories or []),
         "blacklist_roms": sorted(config.blacklist_roms or []),
+        "ignore_paths": sorted(config.ignore_paths or []),
     }
 
 

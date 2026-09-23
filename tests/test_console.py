@@ -33,6 +33,18 @@ class TestTheVerdict:
         found = console.classify(self.SET, self.CONSOLE, ["disked"])
         assert found == {"disked": (console.MISSING, ["disk.chd"])}
 
+    def test_a_device_rom_counts_like_the_machine_s_own(self):
+        """galaga.zip carries namco51's 51xx.bin: a device ROM redumped between the
+        two releases stops the game as surely as one of its own."""
+        set_media = {"galaga": [{"aa": "gg1.bin"}, {}, ["namco51"]],
+                     "namco51": [{"51": "51xx.bin"}, {}, []]}
+        console_media = {"galaga": [{"aa": "gg1.bin"}, {}, ["namco51"]],
+                         "namco51": [{"50": "51xx.bin"}, {}, []]}
+        found = console.classify(set_media, console_media, ["galaga"])
+        assert found == {"galaga": (console.MISSING, ["51xx.bin"])}
+        console_media["namco51"] = [{"51": "51xx.bin"}, {}, []]
+        assert console.classify(set_media, console_media, ["galaga"]) == {}
+
     def test_the_folders_are_the_settings_or_the_defaults(self, config):
         assert console.folder_for(console.NEWER, config) == "ZZ-Version-Mismatch"
         config.missing_rom_folder = "ZZ-Needs-Redump"

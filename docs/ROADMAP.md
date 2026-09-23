@@ -160,14 +160,17 @@ the first kind is filed under `ZZ-Version-Mismatch/`, the second under `ZZ-Missi
 genre and category kept inside; both names are settings. Nothing is deleted, and the
 day the console catches up the setting changes and they move back by rename.
 
-## 11. An ignore list — **next**
+## 11. An ignore list — **done, 2026-09-23**
 
 The library root on a Batocera box holds files Marquee did not put there and must never
 touch: the BIOS zips a BIOS pack drops in (`neogeo.zip`, `pgm.zip`, `cpzn1.zip`...) for
-the older libretro cores that want split sets. Today they show up among "files nothing
-wants", one tick away from deletion. A list of paths or patterns the user maintains --
-Settings, and an "Ignore" button on the Transfer page's delete list -- that the plan
-leaves out of the diff entirely: never deleted, never moved, never counted.
+the older libretro cores that want split sets. They showed up among "files nothing
+wants", one tick away from deletion. `ignore_paths` (Settings, or "Ignore" / "Leave them
+alone" on the Transfer page's delete list) takes them out of the diff altogether: never
+deleted, never moved from, never counted. Patterns start at the library's top and `*`
+never crosses a folder, so `*.zip` is exactly the top-level zips. A path the selection
+itself wants stays Marquee's whatever the list says. The Transfer page applies it to the
+plan in hand; nothing has to be listed again.
 
 ## 8. A database — only when something needs it
 

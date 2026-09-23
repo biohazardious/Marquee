@@ -181,7 +181,7 @@ def _query_free_space(conn, share, path, timeout=30):
         return None
     expiry = time_module.time() + timeout
     path = path.replace("/", "\\").strip("\\")
-    result, failure = [], []
+    result, failure, mids = [], [], []
 
     def fail(reason):
         failure.append(reason)
@@ -195,6 +195,7 @@ def _query_free_space(conn, share, path, timeout=30):
             create_options=0, create_disp=FILE_OPEN))
         message.tid = tid
         conn._sendSMBMessage(message)
+        mids.append(message.mid)
         conn.pending_requests[message.mid] = _PendingRequest(
             message.mid, expiry, created, fail, tid=tid)
 
@@ -208,6 +209,7 @@ def _query_free_space(conn, share, path, timeout=30):
             file_info_class=FS_FULL_SIZE, input_buf=b"", output_buf_len=64))
         message.tid = kwargs["tid"]
         conn._sendSMBMessage(message)
+        mids.append(message.mid)
         conn.pending_requests[message.mid] = _PendingRequest(
             message.mid, expiry, queried, fail, tid=kwargs["tid"], fid=fid)
 
@@ -220,6 +222,7 @@ def _query_free_space(conn, share, path, timeout=30):
         message = SMB2Message(SMB2CloseRequest(kwargs["fid"]))
         message.tid = kwargs["tid"]
         conn._sendSMBMessage(message)
+        mids.append(message.mid)
         conn.pending_requests[message.mid] = _PendingRequest(
             message.mid, expiry, closed, fail)
 
@@ -240,12 +243,17 @@ def _query_free_space(conn, share, path, timeout=30):
             message = SMB2Message(SMB2TreeConnectRequest(
                 r"\\%s\%s" % (conn.remote_name.upper(), share)))
             conn._sendSMBMessage(message)
+            mids.append(message.mid)
             conn.pending_requests[message.mid] = _PendingRequest(
                 message.mid, expiry, connected, fail)
         while conn.is_busy:
             conn._pollForNetBIOSPacket(timeout)
     finally:
         conn.is_busy = False
+        # Whatever is still waiting was ours. Left in place, a late reply would run
+        # its callback during some later call -- and clear is_busy under it.
+        for mid in mids:
+            conn.pending_requests.pop(mid, None)
     return result[0] if result and not failure else None
 
 
@@ -388,6 +396,10 @@ class RemoteCopy(CopyBackend):
         start = handle.tell()
         try:
             try:
+                if self.conn is None:
+                    # A reconnect that failed on the last file left no session: this
+                    # is a lost connection too, not an AttributeError that ends the run.
+                    raise NotConnectedError("not connected")
                 self.conn.storeFile(self.share_name, partial, handle, timeout=30)
             except _LOST:
                 # Once more on a fresh session, from the start of the file: a
@@ -399,11 +411,42 @@ class RemoteCopy(CopyBackend):
                     handle.seek(start)
                 self._reconnect()
                 self.conn.storeFile(self.share_name, partial, handle, timeout=30)
-            self._delete_quietly(remote)
-            self._call("rename", self.share_name, partial, remote)
+            self._replace(partial, remote)
         except _FAILED as error:
             self._delete_quietly(partial)
             raise BackendError(f"Upload of '{remote}' failed: {_brief(error)}") from error
+
+    def _replace(self, partial, remote):
+        """Put the finished upload in place of whatever was there, keeping the old
+        file until the new one is in.
+
+        SMB will not rename onto an existing file, so the old one has to make way
+        first. It used to be deleted: when the rename then failed, the finished
+        upload was deleted too, and neither copy was left -- for a ROM the next run
+        copies again, for the gamelist it was every favourite on the console.
+        """
+        aside = remote + ".marquee-old"
+        moved_aside = False
+        # From the listing a copy has already read, so a new file costs no extra call.
+        if posixpath.basename(remote) in self._listing(posixpath.dirname(remote)):
+            try:
+                self._call("rename", self.share_name, remote, aside)
+                moved_aside = True
+            except smb_structs.OperationFailure:
+                pass                      # gone since the listing, which is fine
+        try:
+            self._call("rename", self.share_name, partial, remote)
+        except _FAILED:
+            if moved_aside:
+                try:
+                    self._call("rename", self.share_name, aside, remote)
+                except _FAILED:
+                    pass
+            # What the listings say is no longer known; the next look asks again.
+            self._listing_cache.clear()
+            raise
+        if moved_aside:
+            self._delete_quietly(aside)
 
     def _delete_quietly(self, remote):
         try:
@@ -556,7 +599,10 @@ class RemoteCopy(CopyBackend):
         except _FAILED as error:
             raise BackendError(f"Could not rename {from_relpath}: "
                                f"{_brief(error)}") from error
-        self._listing_cache.clear()
+        finally:
+            # Whether or not it said so: a rename retried after a dropped session
+            # can have happened the first time. What the listings held is not known.
+            self._listing_cache.clear()
 
     def disk_space(self):
         try:
