@@ -41,6 +41,35 @@ def is_leftover(name):
     return name.lower().endswith(LEFTOVER_SUFFIXES)
 
 
+# Where EmulationStation and its scrapers keep media. An empty one is still where they
+# will look, so it is never tidied away.
+KEPT_FOLDERS = frozenset(("images", "videos", "manuals", "media", "downloaded_images",
+                          "downloaded_videos"))
+
+
+def empty_folders(folders, occupied):
+    """The folders below the root with no file anywhere beneath them, deepest first.
+
+    `folders` is every folder an index walked, `occupied` those that directly hold a
+    file of any kind -- a scraped image or a note counts as much as a ROM.
+    """
+    full = set()
+    for folder in occupied:
+        while folder:
+            if folder in full:
+                break
+            full.add(folder)
+            folder = folder.rpartition("/")[0]
+    return sorted((folder for folder in folders
+                   if folder and folder not in full and removable(folder)),
+                  key=lambda folder: (-folder.count("/"), folder))
+
+
+def removable(folder):
+    """Whether an empty folder may go: never the root, never a media folder."""
+    return bool(folder) and folder.split("/", 1)[0].lower() not in KEPT_FOLDERS
+
+
 class CopyBackend:
     """The interface `pipeline.execute` relies on.
 
@@ -89,8 +118,25 @@ class CopyBackend:
         """
         raise NotImplementedError
 
-    # Filled in by index(): see above.
+    # Filled in by index(): see above. `folders` is every folder walked below the
+    # root and `occupied` the ones holding a file of any kind, which is what finds the
+    # folders a removed game left behind (see `empty_folders`).
     leftovers = ()
+    folders = ()
+    occupied = ()
+
+    def free_space(self):
+        """Bytes free on the disk behind the destination, for this user, or None
+        when the protocol cannot say (FTP has no such question)."""
+        return None
+
+    def remove_folder(self, relpath):
+        """Remove one folder if, and only if, it is empty. Returns whether it went.
+
+        Every protocol refuses to remove a folder with anything in it, so this can
+        never take a file with it -- which is the whole of its safety.
+        """
+        return False
 
     def move(self, from_relpath, to_relpath):
         """Relocate a file already at the destination. Far cheaper than re-copying."""

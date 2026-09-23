@@ -96,6 +96,9 @@ class Summary:
     moved: int = 0
     deleted: int = 0
     skipped: int = 0
+    # Folders left with nothing in them -- a game's disk folder after the game went,
+    # a category nothing is filed under any more -- and removed.
+    folders_removed: int = 0
     # Files a copy or delete raised on. One full disk or one vanished source used to
     # take the whole run with it, manifest included.
     failed: int = 0
@@ -403,6 +406,41 @@ def _left_out(rejects, catlist, config, rom_dir, chd_dir, reporter, progress=Non
     return plan
 
 
+def _free_space(backend):
+    """What the backend can say about the room left -- never a reason the library
+    could not be read."""
+    try:
+        return backend.free_space()
+    except Exception:  # noqa: BLE001 - see above
+        return None
+
+
+def tidy_folders(backend, candidates):
+    """Remove the empty folders among `candidates`, and any parent that leaves empty.
+
+    Deepest first, so a category folder goes once the game folders in it have. Only
+    ever an empty folder: the backend's own remove refuses one with anything in it.
+    """
+    pending = {folder for folder in candidates if backends.removable(folder)}
+    tried, removed = set(), 0
+    while pending:
+        folder = max(pending, key=lambda name: (name.count("/"), name))
+        pending.discard(folder)
+        if folder in tried:
+            continue
+        tried.add(folder)
+        try:
+            gone = backend.remove_folder(folder)
+        except (OSError, MarqueeError):
+            gone = False
+        if gone:
+            removed += 1
+            parent = posixpath.dirname(folder)
+            if backends.removable(parent):
+                pending.add(parent)
+    return removed
+
+
 def compare_destination(built, config, reporter=None):
     """Index the destination and work out what actually has to move."""
     reporter = reporter or Reporter()
@@ -413,21 +451,28 @@ def compare_destination(built, config, reporter=None):
                                            hardlink=backends.effective_hardlink(config))
         existing = backend.index()
         leftovers = list(getattr(backend, "leftovers", ()) or ())
+        empty = backends.empty_folders(getattr(backend, "folders", ()) or (),
+                                       getattr(backend, "occupied", ()) or ())
         # The record of a library on a share is read here, on a connection that is
         # open anyway; the pages read it from memory after this.
         manifest.load(config.copy_path, backend)
+        free = _free_space(backend) if backends.is_remote(config.copy_path) else None
     except Exception as error:  # noqa: BLE001 - a destination that cannot be read is
         # not fatal; the run simply cannot tell moves from new files.
         reporter.warn(f"Could not read the destination ({error}); "
                       f"treating everything as new.")
         existing = {}
         leftovers = []
+        empty = []
+        free = None
     finally:
         if backend is not None:
             backend.close()
 
     report = sync.compare(built, existing)
     report.leftovers = leftovers
+    report.empty_folders = empty
+    report.free_bytes = free
     reporter.info(
         f"{report.counts[sync.KEEP]} already there, {report.counts[sync.NEW]} new, "
         f"{report.counts[sync.UPDATE]} changed, {report.counts[sync.MOVE]} moved, "
@@ -547,6 +592,22 @@ def _execute(built, config, reporter, backend, should_continue, delete_orphans,
             summary.deleted += 1
         if summary.deleted:
             reporter.info(f"Removed {summary.deleted} files the plan no longer wants.")
+
+    if not summary.cancelled:
+        # What was empty when the library was read, and whatever this run emptied:
+        # the folders files were moved out of, or deleted from.
+        emptied = [posixpath.dirname(relpath) for relpath in
+                   getattr(report, "leftovers", None) or ()]
+        emptied += [posixpath.dirname(action.from_relpath)
+                    for action in report.of(sync.MOVE)]
+        if delete_orphans:
+            emptied += [posixpath.dirname(action.relpath)
+                        for action in report.of(sync.ORPHAN)]
+        summary.folders_removed = tidy_folders(
+            backend, list(getattr(report, "empty_folders", None) or ()) + emptied)
+        if summary.folders_removed:
+            reporter.info(f"Removed {summary.folders_removed} empty "
+                          f"folder{'' if summary.folders_removed == 1 else 's'}.")
 
     if summary.failed:
         reporter.warn(f"{summary.failed} file(s) could not be written or removed; "

@@ -557,9 +557,17 @@ def bytes_already_present(plan, copy_path):
 
 
 def check_free_space(plan, copy_path):
-    """(needed, free) in bytes for a local destination, or None when unknowable."""
+    """(needed, free) in bytes, or None when unknowable.
+
+    A share is measured when the library is read (SMB and SFTP can say; FTP
+    cannot), so it is known exactly as long as the diff is.
+    """
     if backends.is_remote(copy_path):
-        return None
+        report = getattr(plan, "sync", None)
+        free = getattr(report, "free_bytes", None)
+        if free is None:
+            return None
+        return max(plan.sync.to_transfer, 0), free
 
     probe = copy_path
     while probe and not os.path.isdir(probe):

@@ -174,10 +174,13 @@ class FtpCopy(CopyBackend):
     def index(self, on_progress=None):
         found = {}
         self.leftovers = []
+        self.folders, self.occupied = [], set()
         self._walk(self.root, "", found, on_progress)
         return found
 
     def _walk(self, directory, prefix, found, on_progress):
+        if prefix:
+            self.folders.append(prefix[:-1])
         entries = []
         try:
             # MLSD gives a type for each entry; without it there is no way to tell a
@@ -203,14 +206,22 @@ class FtpCopy(CopyBackend):
                 continue
             kind = facts.get("type")
             path = posixpath.join(directory, name)
+            if kind in ("cdir", "pdir"):
+                continue
             if is_leftover(name) and kind in (None, "file"):
                 self.leftovers.append(prefix + name)
+                if prefix:
+                    self.occupied.add(prefix[:-1])
                 continue
             if kind is None and not is_managed(name) and self._is_dir(path):
                 kind = "dir"
             if kind == "dir":
                 self._walk(path, f"{prefix}{name}/", found, on_progress)
-            elif kind == "file" or (kind is None and is_managed(name)):
+                continue
+            # Anything that is not a folder -- a link, an image, a note -- keeps it.
+            if prefix:
+                self.occupied.add(prefix[:-1])
+            if kind == "file" or (kind is None and is_managed(name)):
                 if not is_managed(name):
                     continue
                 size = facts.get("size")
@@ -283,6 +294,13 @@ class FtpCopy(CopyBackend):
             self.conn.delete(remote)
         except ftplib.all_errors:
             pass
+
+    def remove_folder(self, relpath):
+        try:
+            self.conn.rmd(posixpath.join(self.root, relpath))
+        except ftplib.all_errors:
+            return False
+        return True
 
     def read_file(self, relpath):
         # No random access over FTP, but a whole small file is one RETR.

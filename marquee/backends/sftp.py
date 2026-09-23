@@ -173,6 +173,7 @@ class SftpCopy(CopyBackend):
     def index(self, on_progress=None):
         found = {}
         self.leftovers = []
+        self.folders, self.occupied = [], set()
         self._walk(self.root, "", found, on_progress)
         return found
 
@@ -180,16 +181,25 @@ class SftpCopy(CopyBackend):
         try:
             entries = self.conn.listdir_attr(directory)
         except IOError:
+            # Unreadable is not empty.
+            if prefix:
+                self.folders.append(prefix[:-1])
+                self.occupied.add(prefix[:-1])
             return
         except FAILURES as error:
             # A half-walked library reads as missing everything it did not reach.
             raise BackendError(f"Lost the connection while listing {directory}: "
                                f"{error}") from error
+        if prefix:
+            self.folders.append(prefix[:-1])
         for entry in entries:
             path = posixpath.join(directory, entry.filename)
             if stat_module.S_ISDIR(entry.st_mode):
                 self._walk(path, f"{prefix}{entry.filename}/", found, on_progress)
-            elif is_leftover(entry.filename):
+                continue
+            if prefix:
+                self.occupied.add(prefix[:-1])
+            if is_leftover(entry.filename):
                 self.leftovers.append(prefix + entry.filename)
             elif is_managed(entry.filename):
                 found[prefix + entry.filename] = entry.st_size
@@ -220,6 +230,21 @@ class SftpCopy(CopyBackend):
             self.conn.remove(remote)
         except FAILURES:
             pass
+
+    def free_space(self):
+        # statvfs@openssh.com: OpenSSH has it, a good many other servers do not.
+        try:
+            stat = self.conn.statvfs(self.root)
+        except Exception:  # noqa: BLE001 - unsupported is simply unknown
+            return None
+        return stat.f_bavail * (stat.f_frsize or stat.f_bsize)
+
+    def remove_folder(self, relpath):
+        try:
+            self.conn.rmdir(posixpath.join(self.root, relpath))
+        except FAILURES:
+            return False
+        return True
 
     def write_text(self, relpath, text):
         remote = posixpath.join(self.root, relpath)

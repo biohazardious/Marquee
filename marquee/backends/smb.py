@@ -156,6 +156,99 @@ class SmbReadable:
         return False
 
 
+def _query_free_space(conn, share, path, timeout=30):
+    """(free bytes for this user, total bytes) of the disk behind a share, or None.
+
+    pysmb has no call for it. This is its own getSecurity() with the filesystem
+    asked instead of the security descriptor: SMB2 QUERY_INFO, FileFsFullSize-
+    Information ([MS-FSCC] 2.5.4). It leans on pysmb's internals, so any failure
+    at all -- SMB1, an older or newer pysmb, a server that says no -- is simply
+    "not known", which is what the page said before this existed.
+    """
+    import struct
+    import time as time_module
+
+    from smb.base import _PendingRequest
+    from smb.smb2_constants import SMB2_INFO_FILESYSTEM, SMB2_OPLOCK_LEVEL_NONE
+    from smb.smb2_structs import (SMB2CloseRequest, SMB2CreateRequest, SMB2Message,
+                                  SMB2QueryInfoRequest, SMB2TreeConnectRequest)
+    from smb.smb_constants import (FILE_OPEN, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+                                   FILE_SHARE_READ, FILE_SHARE_WRITE, SEC_IMPERSONATE,
+                                   SYNCHRONIZE)
+
+    FS_FULL_SIZE = 7
+    if not conn.is_using_smb2 or not conn.has_authenticated:
+        return None
+    expiry = time_module.time() + timeout
+    path = path.replace("/", "\\").strip("\\")
+    result, failure = [], []
+
+    def fail(reason):
+        failure.append(reason)
+        conn.is_busy = False
+
+    def send_create(tid):
+        message = SMB2Message(SMB2CreateRequest(
+            path, file_attributes=0, access_mask=FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            share_access=FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            oplock=SMB2_OPLOCK_LEVEL_NONE, impersonation=SEC_IMPERSONATE,
+            create_options=0, create_disp=FILE_OPEN))
+        message.tid = tid
+        conn._sendSMBMessage(message)
+        conn.pending_requests[message.mid] = _PendingRequest(
+            message.mid, expiry, created, fail, tid=tid)
+
+    def created(reply, **kwargs):
+        if reply.status != 0:
+            fail("open")
+            return
+        fid = reply.payload.fid
+        message = SMB2Message(SMB2QueryInfoRequest(
+            fid, flags=0, additional_info=0, info_type=SMB2_INFO_FILESYSTEM,
+            file_info_class=FS_FULL_SIZE, input_buf=b"", output_buf_len=64))
+        message.tid = kwargs["tid"]
+        conn._sendSMBMessage(message)
+        conn.pending_requests[message.mid] = _PendingRequest(
+            message.mid, expiry, queried, fail, tid=kwargs["tid"], fid=fid)
+
+    def queried(reply, **kwargs):
+        if reply.status == 0 and len(reply.payload.data) >= 32:
+            total, caller, _actual, sectors, sector_bytes = struct.unpack(
+                "<QQQII", reply.payload.data[:32])
+            unit = sectors * sector_bytes
+            result.append((caller * unit, total * unit))
+        message = SMB2Message(SMB2CloseRequest(kwargs["fid"]))
+        message.tid = kwargs["tid"]
+        conn._sendSMBMessage(message)
+        conn.pending_requests[message.mid] = _PendingRequest(
+            message.mid, expiry, closed, fail)
+
+    def closed(_reply, **_kwargs):
+        conn.is_busy = False
+
+    conn.is_busy = True
+    try:
+        if share in conn.connected_trees:
+            send_create(conn.connected_trees[share])
+        else:
+            def connected(reply, **_kwargs):
+                if reply.status != 0:
+                    fail("tree")
+                    return
+                conn.connected_trees[share] = reply.tid
+                send_create(reply.tid)
+            message = SMB2Message(SMB2TreeConnectRequest(
+                r"\\%s\%s" % (conn.remote_name.upper(), share)))
+            conn._sendSMBMessage(message)
+            conn.pending_requests[message.mid] = _PendingRequest(
+                message.mid, expiry, connected, fail)
+        while conn.is_busy:
+            conn._pollForNetBIOSPacket(timeout)
+    finally:
+        conn.is_busy = False
+    return result[0] if result and not failure else None
+
+
 class RemoteCopy(CopyBackend):
     def __init__(self, conn_str, reporter=None):
         self.reporter = reporter or Reporter()
@@ -396,12 +489,21 @@ class RemoteCopy(CopyBackend):
         """Walk the share below remote_path. One listPath per directory, not per file."""
         found = {}
         self.leftovers = []
-        pending = [self.remote_path.strip("/")]
+        self.folders, self.occupied = [], set()
+        base = self.remote_path.strip("/")
+        pending = [base]
         while pending:
             current = pending.pop()
+            here = posixpath.relpath(current, base or ".") if current != base else ""
+            if here:
+                self.folders.append(here)
             try:
                 entries = self._call("listPath", self.share_name, current or "/")
             except smb_structs.OperationFailure:
+                # Unreadable is not empty: whatever is in there, it is not ours to
+                # call nothing.
+                if here:
+                    self.occupied.add(here)
                 continue
             except _FAILED as error:
                 # A half-walked library reads as missing everything it did not reach:
@@ -418,7 +520,10 @@ class RemoteCopy(CopyBackend):
                 child = posixpath.join(current, entry.filename) if current else entry.filename
                 if entry.isDirectory:
                     pending.append(child)
-                elif is_leftover(entry.filename):
+                    continue
+                if here:
+                    self.occupied.add(here)
+                if is_leftover(entry.filename):
                     self.leftovers.append(
                         posixpath.relpath(child, self.remote_path.strip("/") or "."))
                 elif is_managed(entry.filename):
@@ -452,6 +557,23 @@ class RemoteCopy(CopyBackend):
             raise BackendError(f"Could not rename {from_relpath}: "
                                f"{_brief(error)}") from error
         self._listing_cache.clear()
+
+    def free_space(self):
+        try:
+            found = _query_free_space(self.conn, self.share_name,
+                                      self.remote_path.strip("/"))
+        except Exception:  # noqa: BLE001 - see _query_free_space
+            return None
+        return found[0] if found else None
+
+    def remove_folder(self, relpath):
+        # The server refuses a folder with anything in it (STATUS_DIRECTORY_NOT_EMPTY).
+        try:
+            self._call("deleteDirectory", self.share_name, self._absolute(relpath))
+        except _FAILED:
+            return False
+        self._listing_cache.clear()
+        return True
 
     def delete(self, relpath):
         try:

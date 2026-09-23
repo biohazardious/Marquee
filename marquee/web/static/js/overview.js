@@ -75,6 +75,12 @@ export function nextStep(data) {
              action: config.download_client ? 'See what they cost' : 'Open Settings',
              page: config.download_client ? 'wanted' : 'settings' };
   }
+  if (plan.empty_folders) {
+    return { tone: 'info', title: `${plural(plan.empty_folders, 'empty folder', 'empty folders')} in the library`,
+             text: 'Games that left the library took their files with them but not their folders. '
+               + 'A transfer removes them; nothing else changes.',
+             action: 'Preview the transfer', page: 'changes' };
+  }
   if (!Object.keys(plan.states || {}).length) {
     return { tone: 'info', title: 'Everything is in place',
              text: 'Every game the selection wants is in the library, by name and size. '
@@ -276,7 +282,7 @@ function spacePanel(data) {
   const body = el('div', { class: 'body' });
   if (!plan || !plan.free_human) {
     body.append(el('div', { class: 'muted', text: plan
-      ? 'This library is on a share, which does not tell Marquee how much room is left. Check the console\u2019s disk before a large transfer.'
+      ? 'This library\u2019s server does not say how much room is left (FTP cannot). Check the console\u2019s disk before a large transfer.'
       : 'Build a plan to see what the next transfer needs.' }));
   } else {
     const needed = parseBytes(plan.needed_human);

@@ -531,6 +531,10 @@ def changes_payload(plan, kind="", query="", offset=0, limit=ROW_LIMIT, sizes=No
         # planned for a file that does not exist yet, so it would otherwise be
         # missing from the one page that claims to say what is going to happen.
         "waiting": len(needed),
+        # Folders with nothing in them, which the transfer removes. Examples, since a
+        # count alone does not say "your old Quiz folders".
+        "empty_folders": len(getattr(report, "empty_folders", None) or ()),
+        "empty_examples": list(getattr(report, "empty_folders", None) or ())[:12],
     }
 
     chosen = kind if any(entry["kind"] == kind for entry in kinds) else ""
@@ -887,6 +891,7 @@ def describe(plan, config, cache=None, sizes=None):
             {name for kind in held for name in plan.sync.machines(kind)})
         payload["orphan_examples"] = [action.relpath
                                       for action in plan.sync.of(sync.ORPHAN)[:40]]
+        payload["empty_folders"] = len(getattr(plan.sync, "empty_folders", None) or ())
     if space:
         needed, free = space
         payload["needed_human"] = human_bytes(needed)

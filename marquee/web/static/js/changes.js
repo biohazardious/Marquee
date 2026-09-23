@@ -410,6 +410,12 @@ function goPanel(data) {
     moving.files
       ? el('b', { text: `${plural(moving.files, 'file', 'files')} to move` })
       : null,
+    data.empty_folders
+      ? el('b', {
+        text: `${plural(data.empty_folders, 'empty folder', 'empty folders')} to remove`,
+        title: `Nothing is in them. For example: ${(data.empty_examples || []).join(', ')}`,
+      })
+      : null,
     V.remove && data.delete_bytes
       ? el('b', { class: 'bad', text: `${data.delete_bytes_human} to delete` })
       : null,

@@ -269,11 +269,16 @@ class LocalCopy(CopyBackend):
         root = self.copy_path.rstrip(os.sep)
         found = {}
         self.leftovers = []
+        self.folders, self.occupied = [], set()
         if not os.path.isdir(root):
             return found
         for current, _dirs, names in os.walk(root):
             relative = os.path.relpath(current, root)
             prefix = "" if relative == "." else relative.replace(os.sep, "/") + "/"
+            if prefix:
+                self.folders.append(prefix[:-1])
+                if names:
+                    self.occupied.add(prefix[:-1])
             for name in names:
                 if is_leftover(name):
                     self.leftovers.append(prefix + name)
@@ -329,6 +334,20 @@ class LocalCopy(CopyBackend):
         if self.hardlink and self._try_link(source, target):
             return True
         self._copy_whole(source, target)
+        return True
+
+    def free_space(self):
+        import shutil
+        try:
+            return shutil.disk_usage(self.copy_path).free
+        except OSError:
+            return None
+
+    def remove_folder(self, relpath):
+        try:
+            os.rmdir(os.path.join(self.copy_path, relpath.replace("/", os.sep)))
+        except OSError:
+            return False
         return True
 
     def _prune(self, directory):

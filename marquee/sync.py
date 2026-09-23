@@ -44,6 +44,12 @@ class SyncReport:
     # Partial copies a killed run left at the destination; the next transfer removes
     # them. Found by the index, never by the plan's own reckoning.
     leftovers: list = field(default_factory=list)
+    # Folders at the destination with nothing in them at all, deepest first. The next
+    # transfer removes them. Found by the index, like the leftovers.
+    empty_folders: list = field(default_factory=list)
+    # Free space behind the destination when it was read, where the protocol can say.
+    # A share cannot be measured with disk_usage from here.
+    free_bytes: int = None
 
     def of(self, kind):
         return [action for action in self.actions if action.kind == kind]

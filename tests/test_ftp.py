@@ -143,6 +143,32 @@ class TestIndex:
         assert "Shooter/Flying Vertical/galaga.zip" in handle.index()
 
 
+
+class TestEmptyFolders:
+    """A removed game's folder stayed on the console as an empty entry."""
+
+    def test_the_index_sees_them(self, backend, rom):
+        from marquee import backends
+        handle, root = backend
+        handle.copy(rom, "Maze")
+        (root / "roms" / "Unlisted" / "dlair").mkdir(parents=True)
+        handle.index()
+        assert backends.empty_folders(handle.folders, handle.occupied) == \
+            ["Unlisted/dlair", "Unlisted"]
+
+    def test_only_an_empty_one_is_removed(self, backend, rom):
+        handle, root = backend
+        handle.copy(rom, "Maze")
+        (root / "roms" / "Empty").mkdir()
+        assert handle.remove_folder("Maze") is False
+        assert (root / "roms" / "Maze" / "galaga.zip").exists()
+        assert handle.remove_folder("Empty") is True
+        assert not (root / "roms" / "Empty").exists()
+
+    def test_free_space_is_unknown(self, backend):
+        handle, _root = backend
+        assert handle.free_space() is None
+
 class TestRearrange:
     def test_a_recategorised_file_is_moved_not_recopied(self, backend, rom):
         handle, root = backend
