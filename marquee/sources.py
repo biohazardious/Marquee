@@ -367,7 +367,7 @@ def generate_listxml(mame_binary="mame", reporter=None):
         return destination
 
     reporter = reporter or Reporter()
-    reporter.info(f"Generating MAME XML from {executable} (this takes a minute)..")
+    reporter.info(f"Generating MAME XML from {executable} (this takes a minute)...")
     partial = destination + ".part"
     try:
         with open(partial, "wb") as out:
@@ -688,9 +688,9 @@ def load_machines(xml_file, use_cache=True, refresh=False, on_progress=None, rep
                           f"({len(cached['machines'])} machines).")
             return cached
 
-    reporter.stage("Parsing Mame XML..")
+    reporter.stage("Parsing the MAME XML...")
     data = extract_machines(xml_file, on_progress=on_progress)
-    reporter.info(f"Parse completed.. {len(data['machines'])} machines read.")
+    reporter.info(f"Parse completed: {len(data['machines'])} machines read.")
     if cache_file:
         # Recorded so the sweep below knows which XML this cache belongs to.
         data["source"] = os.path.abspath(xml_file)

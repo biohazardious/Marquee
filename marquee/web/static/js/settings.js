@@ -31,7 +31,7 @@ export function values() {
     download_password: read('download_password'),
     download_dir: read('download_dir'),
     remote_path_mappings: $('remote_path_mappings')?.value,
-    hardlink: checked('hardlink'),
+    hardlink: $('hardlink') ? { auto: 'auto', on: true, off: false }[$('hardlink').value] : undefined,
     parents_only: checked('parents_only'),
     write_gamelist: checked('write_gamelist'),
     copy_artwork: checked('copy_artwork'),
@@ -41,6 +41,25 @@ export function values() {
   };
   for (const key of Object.keys(out)) if (out[key] === undefined) delete out[key];
   return out;
+}
+
+/* Automatic unless pinned: on exactly when a link from the torrent folder into the
+   library works, which the server tries rather than guesses. The hint says what
+   automatic currently comes to, so nobody has to know what a filesystem is. */
+function hardlinkField(config) {
+  const saved = config.hardlink === true ? 'on' : config.hardlink === false ? 'off' : 'auto';
+  const select = el('select', { id: 'hardlink' },
+    [['auto', 'Automatic'], ['on', 'Always hardlink'], ['off', 'Always copy']]
+      .map(([value, text]) => el('option', { value, text, selected: saved === value })));
+  const now = config.hardlink_effective
+    ? 'Right now that means hardlinks: the library costs no extra space and seeding carries on.'
+    : 'Right now that means copies: the torrent folder and the library cannot share a file.';
+  return el('label', { class: 'fld' },
+    el('span', {}, 'Hardlink or copy', el('em', { text: ' — how files get into the library' })),
+    select,
+    el('div', { class: 'hint', text: `${saved === 'auto' ? now + ' ' : ''}A hardlinked file is `
+      + 'the same file as the torrent’s: a tool that repairs sets in place (clrmamepro, '
+      + 'RomVault) would change the seed too. Marquee itself never writes into a library file.' }));
 }
 
 function field(id, label, note, value, type = 'text') {
@@ -147,13 +166,7 @@ export function render() {
         el('label', { class: 'fld' },
           el('span', {}, 'MAME release', el('em', { text: ' — the XML and catlist are fetched for exactly this version' })),
           el('div', { id: 'mameVersionBox' })),
-        el('label', { class: 'check' },
-          el('input', { type: 'checkbox', id: 'hardlink', checked: config.hardlink }),
-          el('span', {}, el('b', { text: 'Hardlink instead of copying' }),
-            el('div', { class: 'hint', text:
-              'When the library sits on the same filesystem as the downloads, this costs no '
-              + 'extra space and lets seeding carry on. A hardlinked file is the same file, '
-              + 'so anything that writes to a library ROM writes through to the torrent too.' }))),
+        hardlinkField(config),
         el('label', { class: 'check' },
           el('input', { type: 'checkbox', id: 'parents_only', checked: config.parents_only }),
           el('span', {}, el('b', { text: 'One game, one ROM' }),

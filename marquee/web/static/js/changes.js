@@ -152,8 +152,8 @@ function checkNote(data) {
     try { await post('/api/check', {}); } catch (error) { V.error = error.message; render(); }
   };
   return el('div', { class: 'banner info' },
-    'Nothing has looked inside the files yet, so "Replace" only knows what the sizes '
-    + 'say — a redump that weighs the same looks identical from out here. ',
+    'The library has not been checked, so "Replace" goes by name and size only — '
+    + 'a redump that weighs the same as the file it replaces is not caught. ',
     button);
 }
 

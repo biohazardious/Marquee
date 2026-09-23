@@ -189,6 +189,21 @@ def unmask(given, saved):
                       "reused for a different server or user; type it in again.")
 
 
+def effective_hardlink(config):
+    """Whether this configuration links rather than copies.
+
+    Pinned when the setting says True or False. Automatic (None) is on exactly when a
+    link from the source folder into the library works, and never for a library on a
+    share, where there is nothing to link to.
+    """
+    if config.hardlink is not None:
+        return bool(config.hardlink)
+    if not config.copy_path or is_remote(config.copy_path):
+        return False
+    from .local import can_link
+    return bool(can_link(config.rom_dir, config.copy_path))
+
+
 def for_destination(copy_path, reporter=None, hardlink=False):
     """Pick a backend from the destination string.
 

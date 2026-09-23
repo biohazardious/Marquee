@@ -327,7 +327,7 @@ class TestRunModes:
         cli.run(run_args(settings, xml, catlist, yes=True, quiet=True))
         output = capsys.readouterr().out
         assert "in the set" in output and "Done in" in output
-        assert "Parsing Mame XML" not in output
+        assert "Parsing the MAME XML" not in output
 
 
 class TestMainExitCodes:
@@ -604,3 +604,62 @@ class TestALocalRenameNeverOverwrites:
             LocalCopy(str(tmp_path)).move("Old/a.chd", "New/a.chd")
         assert (tmp_path / "New" / "a.chd").read_bytes() == b"new"
         assert (tmp_path / "Old" / "a.chd").exists()
+
+
+class TestAutomaticHardlink:
+    """On exactly when a link from the torrent folder into the library works --
+    tried, not inferred from device numbers, which two bind mounts share."""
+
+    def setup_method(self):
+        from marquee.backends import local
+        local._PROBES.clear()
+
+    def folders(self, tmp_path):
+        torrents = tmp_path / "torrents" / "MAME 0.289 ROMs (non-merged)"
+        torrents.mkdir(parents=True)
+        (torrents / "galaga.zip").write_bytes(b"rom")
+        library = tmp_path / "library"
+        library.mkdir()
+        return torrents.parent, library
+
+    def test_one_filesystem_links(self, tmp_path):
+        from marquee.backends import effective_hardlink
+        torrents, library = self.folders(tmp_path)
+        config = configuration.Config(rom_dir=str(torrents), copy_path=str(library))
+        assert effective_hardlink(config) is True
+        assert list(library.iterdir()) == [], "the probe leaves nothing behind"
+        assert sorted(p.name for p in torrents.rglob("*")) == \
+            ["MAME 0.289 ROMs (non-merged)", "galaga.zip"], "nothing written to the source"
+
+    def test_two_mounts_copy(self, tmp_path, monkeypatch):
+        import errno
+        from marquee.backends import effective_hardlink
+        torrents, library = self.folders(tmp_path)
+
+        def refused(_src, _dst):
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        monkeypatch.setattr(os, "link", refused)
+        config = configuration.Config(rom_dir=str(torrents), copy_path=str(library))
+        assert effective_hardlink(config) is False
+
+    def test_a_library_that_does_not_exist_yet_is_tried_at_its_parent(self, tmp_path):
+        from marquee.backends import effective_hardlink
+        torrents, library = self.folders(tmp_path)
+        config = configuration.Config(rom_dir=str(torrents),
+                                      copy_path=str(library / "not" / "yet"))
+        assert effective_hardlink(config) is True
+
+    def test_pinned_wins_and_a_share_never_links(self, tmp_path):
+        from marquee.backends import effective_hardlink
+        torrents, library = self.folders(tmp_path)
+        assert effective_hardlink(configuration.Config(
+            rom_dir=str(torrents), copy_path=str(library), hardlink=False)) is False
+        assert effective_hardlink(configuration.Config(
+            rom_dir=str(torrents), copy_path="smb://nas/Share/roms")) is False
+
+    def test_an_empty_torrent_folder_copies_until_there_is_something_to_try(self, tmp_path):
+        from marquee.backends import effective_hardlink
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        assert effective_hardlink(configuration.Config(
+            rom_dir=str(empty), copy_path=str(tmp_path))) is False

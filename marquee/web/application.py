@@ -7,12 +7,15 @@ be driven from a test without a socket.
 """
 import threading
 import time
+from dataclasses import replace
 
 from .. import art, fetch, pipeline, sync
 from .. import config as configuration
 from ..errors import MarqueeError
 from ..plan import human_bytes
 from .downloads import DownloadsMixin
+from .fetches import FetchesMixin
+from .reclaim import ReclaimMixin
 from .job import Job
 from .views import built_from
 from .releases import ReleasesMixin, build_label, newest_version
@@ -23,7 +26,8 @@ from .tasks import TasksMixin
 __all__ = ["Application", "build_label", "newest_version"]
 
 
-class Application(SettingsMixin, DownloadsMixin, ReleasesMixin, TasksMixin):
+class Application(SettingsMixin, DownloadsMixin, FetchesMixin, ReclaimMixin, ReleasesMixin,
+                  TasksMixin):
     """Everything the request handler needs, kept out of the handler class."""
 
     def __init__(self, settings_path, token=None):
@@ -91,7 +95,8 @@ class Application(SettingsMixin, DownloadsMixin, ReleasesMixin, TasksMixin):
             return {"started": False, "reason": "the settings are not complete yet"}
         if self.job.busy:
             return {"started": False, "reason": "a job is already running"}
-        self.job.start_plan(config, pipeline.SourceOptions())
+        self.job.start_plan(config, pipeline.SourceOptions(
+            newest_published=self.newest_published))
         return {"started": True}
 
     # -- artwork ------------------------------------------------------------ #
@@ -179,7 +184,8 @@ class Application(SettingsMixin, DownloadsMixin, ReleasesMixin, TasksMixin):
             fetch_support_files=bool(body.get("fetch_support_files")),
             ignore_version_mismatch=bool(body.get("ignore_version_mismatch")),
             refresh_cache=bool(body.get("refresh_cache")),
-            source_progress=lambda: self.source_progress(config))
+            source_progress=lambda: self.source_progress(config),
+            newest_published=self.newest_published)
         self.job.start_plan(config, options)
         return {"started": "plan"}
 
@@ -216,8 +222,10 @@ class Application(SettingsMixin, DownloadsMixin, ReleasesMixin, TasksMixin):
                                    "Build the plan again before transferring.")
             # These only decide how files are written, and the saved ones are what
             # the page shows: hardlink ticked and saved used to copy in full anyway.
-            self.job.config = planned.with_overrides(
-                **{key: getattr(current, key) for key in self.COPY_ONLY})
+            # replace(), not with_overrides(): None is a value here -- a hardlink
+            # set back to automatic -- and with_overrides() would drop it.
+            self.job.config = replace(
+                planned, **{key: getattr(current, key) for key in self.COPY_ONLY})
         version = (body.get("mame_version")
                    or getattr(self.job.config, "mame_version", None)
                    or getattr(self.job.resolution, "xml_version", None))

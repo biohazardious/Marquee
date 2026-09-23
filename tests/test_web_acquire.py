@@ -500,6 +500,20 @@ class FakeClient:
     def ensure_category(self, *args, **kwargs):
         self.category = (args, kwargs)
 
+    def status(self, infohashes=None, category=None):
+        """Queue rows for every torrent this client holds, as queue_payload reads them."""
+        rows = []
+        for infohash, cat in self.known.items():
+            table = self._table(infohash)
+            size = sum(entry["size"] for entry in table)
+            done = sum(int(entry["size"] * entry.get("progress", 0)) for entry in table)
+            rows.append({"hash": infohash, "name": infohash, "category": cat,
+                         "phase": "complete" if done >= size else "downloading",
+                         "state": "", "size": size, "downloaded": done,
+                         "total_size": size, "progress": done / size if size else 0,
+                         "speed": 0, "eta": 0, "save_path": "/data/torrents"})
+        return [row for row in rows if category is None or row["category"] == category]
+
 
 class TestUpgradePreview:
     """Moving the library to a newer release.
@@ -1165,3 +1179,147 @@ class TestWhyATorrentFailed:
         assert found["A"].endswith("Permission denied")
         assert found["B"] == "Permission denied"
         assert len(found) == 2
+
+
+class TestADownloadIsAJob:
+    """Activity used to show a torrent at 63%. What someone asked for was 212 games:
+    how many are in, what is still coming, and why some never will from this set."""
+
+    @pytest.fixture
+    def wired(self, server, xml_path, catlist_path, tmp_path, monkeypatch):
+        monkeypatch.setattr("marquee.sources.cache_dir", lambda: str(tmp_path))
+        base, app = planned_server(server, xml_path, catlist_path,
+                                   download_client="http://fake:8080/")
+        app.releases["data"] = [{
+            "kind": "roms", "version": "0.289", "variant": "non-merged",
+            "full_set": True, "name": "MAME 0.289 ROMs (non-merged)",
+            "infohash": "b3" + "0" * 38, "magnet": "magnet:?xt=urn:btih:" + "b3" + "0" * 38,
+            "from_version": None, "datfile": None}]
+        client = FakeClient(app.job.plan.missing_roms, present=False)
+        app.client = lambda overrides=None: client
+        return base, app, client
+
+    def queue(self, app):
+        app._queue_cache = {"at": 0.0, "data": None}
+        return app.queue_payload()
+
+    def test_a_started_download_is_remembered_as_its_games(self, wired):
+        base, app, _client = wired
+        post(base, "/api/download", {"filters": {}})
+        jobs = self.queue(app)["jobs"]
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job["games"] == len(app.job.plan.missing_roms)
+        assert job["games_done"] == 0 and job["state"] == "waiting"
+        assert {row["game"] for row in job["arriving"]} <= set(app.job.plan.missing_roms)
+
+    def test_a_price_is_not_a_download(self, wired):
+        base, app, _client = wired
+        post(base, "/api/download", {"filters": {}, "dry_run": True})
+        assert self.queue(app)["jobs"] == []
+
+    def test_games_count_in_as_their_files_finish(self, wired):
+        base, app, client = wired
+        post(base, "/api/download", {"filters": {}})
+        first = app.job.plan.missing_roms[0]
+        for entry in client.files_list:
+            if entry["path"].endswith(f"/{first}.zip"):
+                entry["progress"] = 1.0
+        job = self.queue(app)["jobs"][0]
+        assert job["games_done"] == 1
+        assert job["state"] == ("complete" if job["games"] == 1 else "downloading")
+        assert first not in {row["game"] for row in job["arriving"]}
+
+    def test_a_finished_download_since_the_plan_asks_for_a_new_plan(
+            self, wired, xml_path, catlist_path):
+        base, app, client = wired
+        post(base, "/api/download", {"filters": {}})
+        for entry in client.files_list:
+            entry["progress"] = 1.0
+        queue = self.queue(app)
+        assert queue["jobs"][0]["state"] == "complete"
+        assert queue["jobs"][0]["completed_at"]
+        assert queue["finished_since_plan"]["games"] == len(app.job.plan.missing_roms)
+        # The files land in the torrent folder; planning again takes them in, and the
+        # suggestion goes away -- because the plan has them, not because time passed.
+        import zipfile
+        rom_dir = app.current_config().rom_dir
+        for name in app.job.plan.missing_roms:
+            with zipfile.ZipFile(os.path.join(rom_dir, f"{name}.zip"), "w") as archive:
+                archive.writestr(f"{name}.bin", b"rom" * 100)
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        for _ in range(200):
+            if app.job.state in ("planned", "error"):
+                break
+            time.sleep(0.05)
+        assert self.queue(app)["finished_since_plan"]["games"] == 0
+
+    def test_a_plan_that_already_has_the_files_asks_for_nothing(self, wired):
+        """A restart plans straight away, and only then notices the download finished:
+        a clock would call that "arrived since the plan". The plan has them."""
+        base, app, client = wired
+        post(base, "/api/download", {"filters": {}})
+        for entry in client.files_list:
+            entry["progress"] = 1.0
+        from types import SimpleNamespace
+        real = app.job.plan
+        app.job.plan = SimpleNamespace(needed=[], **{k: getattr(real, k) for k in ("sync",)})
+        try:
+            assert self.queue(app)["finished_since_plan"]["games"] == 0
+        finally:
+            app.job.plan = real
+
+    def test_a_disk_counts_for_the_machine_that_asked_not_its_folder(self):
+        from marquee.web import fetches
+        # warfaa's own disk is filed under its parent in a merged set.
+        assert fetches.game_of("MAME 0.288 CHDs (merged)/warfa/warfaa.chd", "chds",
+                               {"warfaa": "warfaa"}) == "warfaa"
+        assert fetches.game_of("MAME 0.288 CHDs (merged)/warfa/warfaa.chd", "chds") == "warfa"
+        assert fetches.game_of("MAME 0.289 ROMs (non-merged)/warfaa.zip", "roms") == "warfaa"
+
+    def test_disks_the_set_does_not_carry_are_explained(self):
+        from marquee.web import fetches
+        part = {"kind": "chds", "release": "MAME 0.288 CHDs (merged)", "version": "0.288",
+                "infohash": "cd" * 20, "files": [],
+                "missing": ["konam80a/826aaa01", "gtfrk11m/886_d02"]}
+        view = fetches._view({"id": "x", "parts": [part]}, "0.289")
+        assert view["missing"][0]["count"] == 2
+        assert view["missing"][0]["names"] == ["826aaa01", "886_d02"]
+        assert "0.288" in view["missing"][0]["why"] and "later CHD set" in view["missing"][0]["why"]
+
+
+class TestArrivedIsAskedOfTheFiles:
+    """warfab's zip arrived; its disk warfa15 is in no CHD set yet. The plan still
+    needs warfab -- for the disk -- and counting the game asked for a new plan for
+    ever. Only what this download brought, and the plan still wants, counts."""
+
+    def mixin(self, tmp_path, monkeypatch, items):
+        import threading
+        from types import SimpleNamespace
+        from marquee.web.fetches import FetchesMixin
+        monkeypatch.setattr("marquee.sources.cache_dir", lambda: str(tmp_path))
+        host = FetchesMixin()
+        host._task_lock = threading.Lock()
+        host._queue_cache = {}
+        host.job = SimpleNamespace(plan=SimpleNamespace(wanted=items))
+        host._write_fetches([{"id": "x", "completed_at": 1.0, "parts": [
+            {"kind": "roms", "release": "R", "infohash": "a" * 40,
+             "files": [{"index": 0, "path": "R/warfab.zip", "size": 10, "game": "warfab"}]},
+            {"kind": "chds", "release": "C", "infohash": "c" * 40,
+             "files": [{"index": 0, "path": "C/warfa/warfaa.chd", "size": 20, "game": "warfaa"}]}]}])
+        return host
+
+    def item(self, name, rom_to_fetch, disks):
+        from types import SimpleNamespace
+        return SimpleNamespace(name=name, rom_to_fetch=rom_to_fetch, disks_to_fetch=disks)
+
+    def test_a_zip_taken_in_with_its_disk_nowhere_is_not_asked_again(self, tmp_path, monkeypatch):
+        host = self.mixin(tmp_path, monkeypatch, [self.item("warfab", False, ["warfa15"]),
+                                                  self.item("warfaa", False, [])])
+        assert host.finished_since_plan()["games"] == 0
+
+    def test_what_the_plan_still_wants_is(self, tmp_path, monkeypatch):
+        host = self.mixin(tmp_path, monkeypatch, [self.item("warfab", True, ["warfa15"]),
+                                                  self.item("warfaa", False, ["warfaa"])])
+        arrived = host.finished_since_plan()
+        assert arrived["games"] == 2 and arrived["bytes"] == 30

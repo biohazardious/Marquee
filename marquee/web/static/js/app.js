@@ -1,6 +1,6 @@
 /* The shell: sidebar, routing, and the few actions that span pages. */
 
-import { $, append, banner, clear, count, debounce, duration, el, human, plural } from './util.js';
+import { $, ago, append, banner, clear, count, debounce, duration, el, human, plural } from './util.js';
 import * as api from './api.js';
 import * as changes from './changes.js';
 import * as leftout from './leftout.js';
@@ -72,6 +72,9 @@ function show(next, detail) {
 window.addEventListener('hashchange', () => {
   const next = route();
   if (next.page !== page || next.detail) show(next.page, next.detail);
+  // "#library/galaga" back to "#library": the page is the same, the drawer is not.
+  // It stayed open over a page whose every click its scrim then swallowed.
+  else if (next.page === 'library') library.close();
 });
 
 /* ---------------- sidebar ---------------- */
@@ -125,7 +128,8 @@ function renderSidefoot(data) {
 
    A name match says nothing: MAME replaces bad dumps and renames chips between
    releases, and a library that never looks inside carries those changes for ever.
-   Reading each zip's directory is about a minute for 10,000 games and is exact. */
+   Reading each zip's directory is about a minute for 10,000 games on a local disk,
+   ten over a share, and is exact. The answer is kept for later plans. */
 function libraryCheck(data) {
   const found = (data.plan || {}).states;
   const busy = data.state === 'checking';
@@ -162,7 +166,8 @@ function libraryCheck(data) {
 
   return el('div', { class: 'panel' },
     el('h2', {}, 'The library itself',
-      el('span', { class: 'sub', text: 'is what is there still the right file?' }),
+      el('span', { class: 'sub', text: data.plan?.checked_at
+        ? `checked ${ago(data.plan.checked_at)}` : 'is what is there still the right file?' }),
       el('span', { class: 'spacer' }), deep, button),
     el('div', { class: 'body tight' },
       rows,
@@ -171,9 +176,10 @@ function libraryCheck(data) {
           + 'each disk was opened and, where a finished download or the torrent\u2019s '
           + 'piece hashes were there to compare against, held to them. '
           + 'Anything out of date counts as something to fetch.'
-        : 'Nothing has looked inside the files yet. Until something does, a game '
-          + 'counts as present because a file with its name is there \u2014 which says '
-          + 'nothing about whether it is still the right one.' })));
+        : 'Not checked yet. Until it is, a game counts as present because a file with '
+          + 'its name and size is there. A check opens each one and compares it with '
+          + 'the release; on a share that takes a while \u2014 about ten minutes for '
+          + 'ten thousand games.' })));
 }
 
 /* Where the rest went. 4,323 of 0.289's 16,350 machines never reach the library, and
@@ -321,7 +327,7 @@ function renderSystem() {
               : data.app.update.latest === data.app.version
                 ? `${data.app.update.latest} — this is it`
                 : `${data.app.update.latest} is the newest tagged; this build is ahead of it`)
-            : (data.app.update?.error ? `could not ask GitHub (${data.app.update.error})` : 'checking…'))) : null,
+            : (data.app.update?.error ? 'could not reach GitHub just now; it tries again within the hour' : 'checking…'))) : null,
         el('p', { class: 'muted' },
           'Marquee builds a categorised MAME library out of the Pleasuredome sets, '
           + 'fetching only the machines you actually keep. '),
@@ -365,6 +371,9 @@ function onState(data) {
       + 'created. Check the path if you expected it to be there already.';
   }
 
+  // Every poll, plan or not: on a first run it is what says "No plan yet" instead
+  // of an empty pill in the corner.
+  renderPlanPill(data);
   if (data.plan) {
     const tag = $('wantedTag');
     if (tag) {
@@ -378,7 +387,6 @@ function onState(data) {
     leftout.adopt(data.config);
     library.fillGenres($('libGenre'), data.plan);
     selection.fillGenres($('selGenre'), data.plan);
-    renderPlanPill(data);
     // The tree is drawn before the first poll lands, so it has to be redrawn when the
     // plan it describes finally arrives.
     showSelectionSaveState();
@@ -579,13 +587,14 @@ function renderStatusClient(queue) {
   append(host, el('i', { class: 'dot good' }), el('b', { text: 'qBittorrent connected' }),
     el('span', { class: 'muted', text: queue.torrents.length
       ? `${count(queue.torrents.length)} of this app's torrents · ${count(queue.seeding || 0)} seeding`
-      : 'nothing of this app\'s in the queue' }));
+      : 'no Marquee downloads' }));
   host.className = 'status-client good';
 }
 
 /* Whether the plan in hand still describes the settings on screen. */
 function withStale(data) {
-  return { ...data, stale: Boolean(data.plan) && dirty() };
+  // The queue too: "a download finished since the plan" is the Overview's to say.
+  return { ...data, stale: Boolean(data.plan) && dirty(), queue: api.state.queue };
 }
 
 /* The topbar's one-line answer to "is the plan current?", in place of a run of
@@ -753,6 +762,8 @@ async function boot() {
   overview.onNavigate(show);
   api.subscribeQueue(renderStatusClient);
   api.subscribeQueue(() => { if (page === 'activity') activity.poll(); });
+  // A download that finishes changes the Overview's advice; redraw when the queue does.
+  api.subscribeQueue(() => { if (page === 'overview') overview.render(withStale(api.state.data)); });
   // "/" jumps to the search box of whatever page has one -- the habit every
   // modern list app has trained.
   document.addEventListener('keydown', (event) => {

@@ -58,6 +58,20 @@ class TestOneMachine:
         assert state == verify.INCOMPLETE
         assert detail == ["parent.1: missing"]
 
+    def test_a_rom_under_its_old_label_is_still_that_rom(self, tmp_path):
+        """MAME finds a ROM by CRC first. raiden2's clones carry 0.289's bytes under
+        the labels an older set gave them, and play."""
+        one, two = b"background one", b"background two"
+        path = make_zip(str(tmp_path / "raiden2eu.zip"),
+                        {"bg-1.u0714": one, "bg-2.u075": two})
+        expected = [("bg-1.u075", crc_of(one), True), ("bg-2.u0714", crc_of(two), False)]
+        assert verify.check(path, expected) == (verify.CURRENT, [])
+
+    def test_the_right_name_with_the_wrong_bytes_is_still_stale(self, tmp_path):
+        path = make_zip(str(tmp_path / "g.zip"), {"g.1": b"old", "g.2": b"other"})
+        state, _detail = verify.check(path, [("g.1", crc_of(b"new"), False)])
+        assert state == verify.STALE
+
     def test_extra_entries_are_fine(self, tmp_path):
         """A non-merged zip carries its BIOS and device ROMs too."""
         data = b"the original dump"

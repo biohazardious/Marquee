@@ -150,7 +150,7 @@ def fetch_xml(version, timeout=600, refresh=False, reporter=None):
             f"mame -listxml.")
 
     url = f"https://raw.githubusercontent.com/{DATS_REPO}/{sha}/{urllib.parse.quote(XML_PATH)}"
-    reporter.info(f"Downloading the MAME {version} XML (about 80 MB)..")
+    reporter.info(f"Downloading the MAME {version} XML (about 80 MB)...")
     payload = _request(url, timeout)
 
     os.makedirs(os.path.dirname(destination), exist_ok=True)
@@ -210,7 +210,7 @@ def fetch_support_file(name, version=None, timeout=60, refresh=False, reporter=N
     path = urllib.parse.quote(SUPPORT_PATHS[name])
     url = f"https://raw.githubusercontent.com/{REPO}/{ref}/{path}"
 
-    (reporter or Reporter()).info(f"Fetching {name} for MAME {version or 'latest'}..")
+    (reporter or Reporter()).info(f"Fetching {name} for MAME {version or 'latest'}...")
     payload = _request(url, timeout)
 
     os.makedirs(os.path.dirname(destination), exist_ok=True)

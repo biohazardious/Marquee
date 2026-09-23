@@ -141,6 +141,7 @@ working; clear it and the file's key is back in force.
 | `MARQUEE_API_KEY` | *(generated)* | The key the web UI asks for |
 | `MARQUEE_PORT` (or `PORT`) | `8585` | The port inside the container. The health check follows it. |
 | `MARQUEE_NO_UPDATE_CHECK` | *(unset)* | Set to `1` to stop it asking GitHub for newer tags |
+| `MARQUEE_INDEX_URL` | *(Pleasuredome's page)* | Where the release listing is read from, for a mirror |
 
 The running version and build (`v0.5.0@7c17217`, or `local` for an image built by
 hand) are at the bottom of the sidebar and on the System page, which also says

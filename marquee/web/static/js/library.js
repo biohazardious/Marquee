@@ -170,7 +170,7 @@ export function render() {
     const empty = el('div', { class: 'empty' },
       el('div', { class: 'big' }, icon(unchecked ? 'search' : 'library')),
       el('div', { text: unchecked
-        ? 'Nothing has looked inside the files yet, so no game has a check result.'
+        ? 'The library has not been checked yet, so no game has a check result. Check it from the System page.'
         : outGenre
           ? `${V.genre} is left out of the library, so none of its games are here.`
           : active.length > 1
@@ -218,12 +218,16 @@ function filtering() {
    on, so it says what the selection weighs and how much of it is already here. */
 function summary() {
   const here = V.rows.filter((row) => row.here).length;
-  const note = V.bytes
-    ? `${human(V.bytes)}`
-    : 'sizes unknown until the release is read';
+  // A game in the library weighs what its files there weigh. One that is not
+  // anywhere yet is only priced by the release's own file list, which is read on
+  // request: it puts the release in the download client, stopped.
+  const catalogue = state.data.catalogue || {};
+  const priceable = !V.bytes && !catalogue.priced && catalogue.client;
+  const note = V.bytes ? human(V.bytes) : 'size not known yet';
   return el('div', { class: 'rowflex libsum' },
     el('b', { text: `${count(V.total)} ${V.total === 1 ? 'game' : 'games'}` }),
     el('span', { class: 'muted', text: note }),
+    priceable ? readSizesButton(catalogue) : null,
     V.have !== 'yes' && here < V.rows.length
       ? el('span', { class: 'badge missing', text: 'includes games not downloaded' })
       : null,
@@ -231,6 +235,33 @@ function summary() {
     filtering()
       ? el('button', { class: 'btn sm ghost', text: 'Clear filters', onclick: clearFilters })
       : null);
+}
+
+function readSizesButton(catalogue) {
+  const button = el('button', {
+    class: 'btn sm ghost', text: catalogue.running ? 'Reading sizes…' : 'Read sizes from the release',
+    title: 'Adds the release to the download client stopped, reads its file list and '
+      + 'downloads nothing. Takes about half a minute.',
+  });
+  button.disabled = Boolean(catalogue.running);
+  button.onclick = async () => {
+    button.disabled = true;
+    button.textContent = 'Reading sizes…';
+    try {
+      await post('/api/catalogue', {});
+    } catch (error) {
+      button.textContent = error.message;
+      return;
+    }
+    // The answer lands in the polled state; the page is redrawn once it is there.
+    for (let tries = 0; tries < 60; tries += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      const now = state.data.catalogue || {};
+      if (now.error) { button.textContent = now.error; return; }
+      if (now.priced && !now.running) { load(); return; }
+    }
+  };
+  return button;
 }
 
 /* Artwork -------------------------------------------------------------------
@@ -585,9 +616,11 @@ export async function open(name) {
         fact('Total size', m.bytes_human),
         fact('Signature', el('span', { class: 'mono dim', text: m.signature })),
       ),
-      m.missing_disks && m.missing_disks.length
+      // Only what is nowhere yet. `missing_disks` means "not in the torrent folder",
+      // and a disk the library already holds was being reported missing from it.
+      m.disks_to_fetch && m.disks_to_fetch.length
         ? el('div', { class: 'banner warn' },
-            `${m.missing_disks.length} disk(s) not in the CHD set yet: ${m.missing_disks.join(', ')}`)
+            `${plural(m.disks_to_fetch.length, 'disk', 'disks')} not downloaded yet: ${m.disks_to_fetch.join(', ')}`)
         : null,
       filesTable(m),
       m.clones && m.clones.length ? clonesBlock(m) : null));

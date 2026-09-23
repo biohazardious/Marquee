@@ -272,6 +272,9 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._send_json(found)
                 return
+            if parsed.path == "/api/reclaim":
+                self._send_json(self.app.reclaim_payload())
+                return
             if parsed.path == "/api/upgrade":
                 self._send_json(self.app.upgrade_payload())
                 return
@@ -372,6 +375,7 @@ class Handler(BaseHTTPRequestHandler):
                   "/api/releases/refresh": self.app.refresh_releases,
                   "/api/art/download": self.app.start_art,
                   "/api/missing/fetch": self.app.fetch_missing,
+                  "/api/reclaim": self.app.reclaim,
                   "/api/download": self.app.download_selection,
                   "/api/catalogue": self.app.prime_catalogue,
                   "/api/left-out/restore": self.app.restore,

@@ -378,3 +378,20 @@ class TestTheDiskFolderFollowsTheRomFolder:
             str(path), Config(rom_dir="/dl/a", chd_dir="/disks", copy_path="/o"))
         back = configuration.load(str(path))
         assert back.with_overrides(rom_dir="/dl/b").chd_dir == "/disks"
+
+
+class TestHardlinkIsAutomaticUnlessPinned:
+    def test_a_new_setup_is_automatic(self):
+        assert Config().hardlink is None
+
+    @pytest.mark.parametrize("value", [None, True, False])
+    def test_it_round_trips(self, tmp_path, value):
+        path = tmp_path / "settings.ini"
+        configuration.write_settings_file(str(path), Config(rom_dir="/r", copy_path="/o",
+                                                             hardlink=value))
+        assert configuration.load(str(path)).hardlink is value
+
+    def test_an_older_file_saying_false_stays_off(self, tmp_path):
+        path = tmp_path / "settings.ini"
+        path.write_text("[config]\nrom_dir = /r\ncopy_path = /o\nhardlink = False\n")
+        assert configuration.load(str(path)).hardlink is False

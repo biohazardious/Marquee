@@ -125,3 +125,15 @@ class TestRelease:
         url = ("https://github.com/x/raw/gh-pages/mame/"
                "MAME%200.289%20ROMs%20(non-merged).zip")
         assert datfile_name(url) == "MAME 0.289 ROMs (non-merged).zip"
+
+
+class TestWhereTheListingIsRead:
+    def test_the_published_page_by_default(self, monkeypatch):
+        from marquee.indexers import pleasuredome
+        monkeypatch.delenv("MARQUEE_INDEX_URL", raising=False)
+        assert pleasuredome.Pleasuredome().url == pleasuredome.INDEX_URL
+
+    def test_a_mirror_by_environment(self, monkeypatch):
+        from marquee.indexers import pleasuredome
+        monkeypatch.setenv("MARQUEE_INDEX_URL", "http://mirror.lan/mame/index.html")
+        assert pleasuredome.Pleasuredome().url == "http://mirror.lan/mame/index.html"

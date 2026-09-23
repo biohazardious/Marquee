@@ -198,6 +198,8 @@ class CopyPlan:
     # {state: count} from the last check of the library against the release, or None
     # when nothing has looked. See marquee.verify.
     checked: dict = None
+    # When that check ran: a verdict kept from an earlier plan is as old as its check.
+    checked_at: float = None
 
     @property
     def absent(self):

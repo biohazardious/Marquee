@@ -77,7 +77,11 @@ def config():
                   blacklist_roms=["blockedgame"],
                   rom_dir="/nonexistent/roms",
                   chd_dir="/nonexistent/chds",
-                  copy_path="/nonexistent/out")
+                  copy_path="/nonexistent/out",
+                  # Pinned: these tests write into library files to stand for a changed
+                  # file, and the romset and the library share tmp_path -- automatic
+                  # would link them, and the write would land in the source too.
+                  hardlink=False)
 
 
 @pytest.fixture

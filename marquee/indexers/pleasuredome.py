@@ -10,6 +10,7 @@ underneath names a newer release).
 Verified against the live page on 2026-09-14.
 """
 import html
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -147,8 +148,10 @@ def _release_from(label, infohash, magnet):
 class Pleasuredome:
     name = "Pleasuredome"
 
-    def __init__(self, url=INDEX_URL, timeout=30):
-        self.url = url
+    def __init__(self, url=None, timeout=30):
+        # MARQUEE_INDEX_URL points it at a mirror of the page -- or, for a test run,
+        # at a stand-in listing sets that are nobody's ROMs.
+        self.url = url or os.environ.get("MARQUEE_INDEX_URL", "").strip() or INDEX_URL
         self.timeout = timeout
 
     def fetch(self):

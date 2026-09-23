@@ -85,7 +85,15 @@ def check(path, expected, opener=None):
             return (DAMAGED, [str(error)])
 
     wrong, missing, inherited = [], [], []
+    # MAME looks a ROM up in a zip by CRC first -- with the name, then without it --
+    # and by name only when there is no CRC to go on. So a ROM whose label a later
+    # release corrected is still that ROM. 23 zips on a real library from an older
+    # set (raiden2's clones, sci's, fsharkb's) carry every byte of 0.289 under the
+    # old labels, and were reported incomplete.
+    crcs = set(found.values())
     for name, crc, merged in expected:
+        if crc and crc in crcs:
+            continue
         here = found.get(name.lower())
         if here is None:
             (inherited if merged else missing).append(name)

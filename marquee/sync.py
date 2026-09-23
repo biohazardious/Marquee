@@ -31,6 +31,9 @@ class Action:
     # what makes them orphans -- and it is what lets a run be described as what
     # happens to a game rather than as four thousand paths.
     machine: str = None
+    # For UPDATE: the size of the file the library holds now, which `size` is not --
+    # that is the file about to replace it. A check's verdict is about this one.
+    held: int = None
 
 
 @dataclass
@@ -175,7 +178,7 @@ def compare(plan, existing):
             continue
         if current is not None:
             report.actions.append(Action(UPDATE, relpath, source, size=size,
-                                         machine=machine))
+                                         machine=machine, held=current))
             continue
         unresolved.append((source, relpath, size, machine))
 

@@ -1,6 +1,7 @@
 """What has been published: Marquee's own releases, MAME's, and moving a library between them."""
 import json
 import os
+import re
 import time
 import urllib.request
 
@@ -11,11 +12,30 @@ from ..errors import MarqueeError
 class ReleasesMixin:
     """Part of `Application`; see marquee.web.application."""
 
+    def newest_published(self):
+        """The newest MAME release with a full ROM set in the listing, or None.
+
+        Read from the listing in hand, or fetched once if there is none yet -- this
+        runs on a plan's worker thread, and only when nothing else names a release.
+        """
+        data = self.releases.get("data")
+        if data is None:
+            found = indexers.default().releases()
+            data = [_release_payload(r) for r in found]
+            self.releases.update(data=data, error=None, fetched_at=time.time())
+        versions = [row["version"] for row in data
+                    if row.get("kind") == "roms" and row.get("full_set") and row.get("version")]
+        return max(versions, key=_version_key) if versions else None
+
     # -- this program's own version ------------------------------------------ #
 
     UPDATE_TTL = 12 * 60 * 60
     UPDATE_RETRY = 60 * 60
     TAGS_URL = "https://api.github.com/repos/biohazardious/Marquee/tags?per_page=30"
+    # The same tags as a feed. Not the API, so not its 60-an-hour allowance -- which
+    # everything else on the same address shares, and which a TrueNAS box had used
+    # up, leaving "HTTP Error 403: rate limit exceeded" on the System page.
+    TAGS_FEED = "https://github.com/biohazardious/Marquee/tags.atom"
 
     def about(self):
         """Version, build and whether something newer is out -- for the sidebar."""
@@ -43,18 +63,32 @@ class ReleasesMixin:
             return
 
         def work():
-            request = urllib.request.Request(
-                self.TAGS_URL, headers={"User-Agent": f"Marquee/{__version__}",
-                                        "Accept": "application/vnd.github+json"})
-            with urllib.request.urlopen(request, timeout=10) as response:
-                tags = json.loads(response.read().decode("utf-8"))
-            self.update["latest"] = newest_version(
-                entry.get("name", "") for entry in tags if isinstance(entry, dict))
+            try:
+                names = self._tags_from_api()
+            except (OSError, ValueError):
+                names = self._tags_from_feed()
+            self.update["latest"] = newest_version(names)
             self.update["error"] = None
 
         # A failed check is a note, not a fault: it is retried after UPDATE_RETRY.
         self._start(self.update, work,
                     finish=lambda: self.update.update(checked_at=time.time()))
+
+    def _tags_from_api(self):
+        request = urllib.request.Request(
+            self.TAGS_URL, headers={"User-Agent": f"Marquee/{__version__}",
+                                    "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            tags = json.loads(response.read().decode("utf-8"))
+        return [entry.get("name", "") for entry in tags if isinstance(entry, dict)]
+
+    def _tags_from_feed(self):
+        request = urllib.request.Request(
+            self.TAGS_FEED, headers={"User-Agent": f"Marquee/{__version__}"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            body = response.read().decode("utf-8", "replace")
+        # Each entry links to .../releases/tag/<name>.
+        return re.findall(r"/releases/tag/([^\"'<>\s]+)", body)
 
     def refresh_releases(self, _body=None):
         def work():

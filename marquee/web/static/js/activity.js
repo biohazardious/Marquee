@@ -1,7 +1,7 @@
 /* Activity: what the job is doing now, and what the download client is fetching. */
 
 import { $, append, clear, count, duration, el, human, plural } from './util.js';
-import { log, refreshQueue, state as store } from './api.js';
+import { api, log, post, refreshQueue, state as store } from './api.js';
 
 let lastQueue = null;
 
@@ -25,8 +25,88 @@ export function render(data) {
     : { top: 0, atEnd: true };
   clear(host);
 
-  host.append(jobPanel(data), el('div', { id: 'queuePanel' }), logPanel(place));
+  host.append(jobPanel(data), el('div', { id: 'queuePanel' }), el('div', { id: 'reclaimPanel' }),
+    logPanel(place));
   renderQueue();
+  renderReclaim();
+}
+
+/* ---------------- getting the space back ---------------- */
+
+/* Kept across redraws: the page is rebuilt on every poll, and a price someone is
+   reading -- or a Remove armed for a second click -- must not vanish under them. */
+const R = { price: null, busy: false, error: '', done: '', armed: false };
+
+async function askPrice() {
+  R.busy = true; R.error = ''; R.done = ''; R.armed = false;
+  renderReclaim();
+  try { R.price = await api('/api/reclaim'); } catch (error) { R.error = error.message; }
+  R.busy = false;
+  renderReclaim();
+}
+
+async function removeReady() {
+  const ready = (R.price?.torrents || []).filter((row) => row.reclaimable);
+  if (!R.armed) { R.armed = true; renderReclaim(); return; }
+  R.busy = true;
+  renderReclaim();
+  try {
+    const done = await post('/api/reclaim', { hashes: ready.map((row) => row.hash) });
+    R.done = `Removed ${plural(done.removed, 'torrent', 'torrents')} and freed ${done.freed_human}. `
+      + 'Build the plan again so it stops expecting their files in the torrent folder.';
+    R.price = null;
+  } catch (error) {
+    R.error = error.message;
+  }
+  R.busy = false; R.armed = false;
+  renderReclaim();
+}
+
+function renderReclaim() {
+  const host = $('reclaimPanel');
+  if (!host) return;
+  clear(host);
+  const body = el('div', { class: 'body' });
+  host.append(el('div', { class: 'panel' },
+    el('h2', {}, 'Reclaim space', el('span', { class: 'sub', text: 'once the library has the files' })),
+    body));
+  if (R.done) body.append(el('div', { class: 'banner good', text: R.done }));
+  if (R.error) body.append(el('div', { class: 'banner bad', text: R.error }));
+  if (!R.price) {
+    body.append(el('p', { class: 'muted', text:
+      'A finished download sits in the torrent folder as well as in the library. Marquee can '
+      + 'remove its own torrents, with their files, once every file is in the library — '
+      + 'nothing else, and nothing before you have seen what it frees.' }),
+    el('button', { class: 'btn', disabled: R.busy, text: R.busy ? 'Working it out…' : 'What could be freed?',
+                   onclick: askPrice }));
+    return;
+  }
+  const rows = R.price.torrents || [];
+  if (!rows.length) {
+    body.append(el('p', { class: 'muted', text: 'None of the torrents in the client are Marquee’s own.' }));
+    return;
+  }
+  body.append(el('table', { class: 'grid' },
+    el('tbody', {}, rows.map((row) => el('tr', { style: 'cursor:default' },
+      el('td', {}, el('b', { text: row.name }),
+        row.blocked ? el('div', { class: 'hint', text: row.blocked }) : null,
+        row.linked ? el('div', { class: 'hint', text:
+          `${plural(row.linked, 'file is a hardlink', 'files are hardlinks')} of the library’s copy: removing frees nothing for ${row.linked === 1 ? 'it' : 'them'}.` }) : null),
+      el('td', { class: 'num nowrap', text: plural(row.files, 'file', 'files') }),
+      el('td', { class: 'num nowrap' },
+        row.reclaimable ? el('span', { class: 'badge new', text: `frees ${row.freed_human}` })
+          : el('span', { class: 'badge keep', text: 'not yet' })))))));
+  const ready = rows.filter((row) => row.reclaimable);
+  body.append(el('p', { class: 'hint', text: R.price.note }));
+  if (ready.length) {
+    body.append(el('button', {
+      class: 'btn danger', disabled: R.busy,
+      text: R.armed
+        ? `Remove ${plural(ready.length, 'torrent', 'torrents')} and free ${R.price.freed_human} — sure?`
+        : `Remove ${plural(ready.length, 'torrent', 'torrents')} and free ${R.price.freed_human}`,
+      onclick: removeReady }));
+  }
+  body.append(el('button', { class: 'btn ghost', style: 'margin-left:8px', text: 'Ask again', onclick: askPrice }));
 }
 
 /* What each state means to a person, and which of the three steps it belongs to.
@@ -68,7 +148,9 @@ function jobPanel(data) {
     body.append(el('div', { class: 'muted', style: 'margin-top:14px', text: `${label}…` }));
   } else if (state === 'planned' && data.plan) {
     body.append(el('div', { class: 'muted', style: 'margin-top:14px',
-      text: `${plural(data.plan.wanted, 'game', 'games')} selected, ${count(data.plan.machines)} on disk. `
+      text: `${plural(data.plan.wanted, 'game', 'games')} selected: `
+        + `${count(data.plan.library_machines ?? 0)} in the library, `
+        + `${count(data.plan.machines)} in the torrent folder. `
         + 'The Transfer page says what a run would do.' }));
   }
 
@@ -125,12 +207,17 @@ function renderQueue() {
     body.append(el('div', { class: 'body' }, el('div', { class: 'banner bad', text: lastQueue.error })));
     return;
   }
-  if (!lastQueue.torrents.length) {
+  const jobs = lastQueue.jobs || [];
+  if (!lastQueue.torrents.length && !jobs.length) {
     body.append(el('div', { class: 'body' },
       el('div', { class: 'muted', text: 'No downloads. Nothing in the client belongs to this app yet.' })));
     return;
   }
+  // What was asked for, as games -- then the torrents underneath, for the detail.
+  jobs.forEach((job) => body.append(jobCard(job)));
+  if (!lastQueue.torrents.length) return;
 
+  body.append(el('div', { class: 'subhead', text: 'Torrents in the client' }));
   body.append(el('table', { class: 'grid' },
     el('thead', {}, el('tr', {},
       el('th', { text: 'Release' }), el('th', { text: 'State' }),
@@ -162,6 +249,51 @@ function renderQueue() {
       el('td', { class: 'num nowrap dim', text: human(torrent.total_size) }),
       el('td', { class: 'num nowrap', text: torrent.speed ? `${human(torrent.speed)}/s` : '-' }),
       el('td', { class: 'num nowrap', text: duration(torrent.eta) }))))));
+}
+
+const JOB_STATE = {
+  waiting: ['Waiting for peers', 'move'], downloading: ['Downloading', 'move'],
+  complete: ['Arrived', 'new'], removed: ['Removed from the client', 'bad'],
+};
+
+/* One download Marquee started: which games, how many are in, what is left, and --
+   the part the queue could never say -- what this release does not carry. */
+function jobCard(job) {
+  const [word, tone] = JOB_STATE[job.state] || [job.state, 'keep'];
+  const percent = job.bytes ? Math.round((job.bytes_done / job.bytes) * 100) : 0;
+  const card = el('div', { class: `fetch ${job.state}` },
+    el('div', { class: 'fetch-head' },
+      el('b', { text: job.label || 'Download' }),
+      el('span', { class: `badge ${tone}`, text: word }),
+      el('span', { class: 'spacer' }),
+      el('span', { class: 'muted small', text: job.releases.join(' + ') })),
+    el('div', { class: 'fetch-figures' },
+      el('span', { class: 'fetch-count', text: `${count(job.games_done)}` }),
+      el('span', { class: 'muted', text: ` of ${plural(job.games, 'game', 'games')} in` }),
+      el('span', { class: 'spacer' }),
+      el('span', { class: 'muted', text: job.state === 'complete'
+        ? human(job.bytes) : `${human(job.bytes - job.bytes_done)} left of ${human(job.bytes)}` })),
+    el('div', { class: 'bar' }, el('i', { style: `width:${percent}%` })));
+  if (job.error) card.append(el('div', { class: 'banner bad', text: job.error }));
+  if (job.state === 'complete' && job.completed_at) {
+    card.append(el('div', { class: 'hint', text:
+      'Everything asked for is here. Build the plan to take it in, then transfer it to the library.' }));
+  }
+  if ((job.arriving || []).length) {
+    const more = (job.arriving_count || job.arriving.length) - job.arriving.length;
+    card.append(el('details', { class: 'fetch-list' },
+      el('summary', { text: `Still arriving: ${plural(job.arriving_count || job.arriving.length, 'game', 'games')}` }),
+      el('ul', {}, job.arriving.map((row) => el('li', {},
+        el('span', { class: 'mono', text: row.game }),
+        el('span', { class: 'bar thin' }, el('i', { style: `width:${Math.round(row.progress * 100)}%` }))))),
+      more > 0 ? el('div', { class: 'muted small', text: `and ${count(more)} more` }) : null));
+  }
+  (job.missing || []).forEach((gap) => card.append(el('div', { class: 'fetch-gap' },
+    el('b', { text: `${plural(gap.count, gap.kind === 'chds' ? 'disk' : 'game', gap.kind === 'chds' ? 'disks' : 'games')} not in ${gap.release}` }),
+    el('div', { class: 'hint', text: gap.why }),
+    el('div', { class: 'mono small muted', text: gap.names.join(', ')
+      + (gap.count > gap.names.length ? ` … and ${count(gap.count - gap.names.length)} more` : '') }))));
+  return card;
 }
 
 function logPanel(place = { top: 0, atEnd: true }) {

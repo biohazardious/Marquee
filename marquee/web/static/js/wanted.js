@@ -252,10 +252,11 @@ function fetchPanel() {
                 el('small', { class: 'dim', text: part.release || '' })),
               el('td', { class: 'num nowrap', text: part.error ? '—' : `${plural(part.files, 'file', 'files')}` }),
               el('td', { class: 'num nowrap', text: part.error ? '' : part.bytes_human }))))),
+          // The count belongs with the price; the names and the reason belong with the
+          // download, where Activity follows it and says why they will not come.
           ...parts.filter((part) => part.missing_count).map((part) => el('div', { class: 'hint', text:
-            `${count(part.missing_count)} not in ${part.release}: `
-            + (part.missing_from_set || []).join(', ')
-            + (part.kind === 'chds' ? ' — the CHD set trails the ROM set by a release or two.' : '') })),
+            `${count(part.missing_count)} not in ${part.release}. Once it starts, Activity `
+            + 'lists them and says why.' })),
           ...parts.filter((part) => part.error).map((part) => el('div', { class: 'banner warn', text: part.error })),
           ...parts.filter((part) => !part.error).map((part) => landingNote(part)),
           el('button', {

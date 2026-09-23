@@ -11,6 +11,70 @@ CHUNK_SIZE = 8 * 1024 * 1024
 CHUNKED_ABOVE = 64 * 1024 * 1024
 
 
+_PROBES = {}
+PROBE_TTL = 60
+
+
+def can_link(source_dir, dest_dir):
+    """Whether a file in `source_dir` can be hardlinked into `dest_dir`: True, False,
+    or None when there is nothing yet to try it with.
+
+    Tried, not inferred. Comparing device numbers says yes for two bind mounts of one
+    disk, and link(2) then refuses with EXDEV. A real link, to a name that is removed
+    at once, is the only answer that holds. Nothing is written into the source folder
+    -- it is the download client's -- only a link made and unmade in the library.
+    Remembered for a minute: the Settings page asks on every change.
+    """
+    if not source_dir or not dest_dir:
+        return None
+    key = (os.path.abspath(source_dir), os.path.abspath(dest_dir))
+    cached = _PROBES.get(key)
+    if cached and time.monotonic() - cached[0] < PROBE_TTL:
+        return cached[1]
+    sample = _some_file(source_dir)
+    target = dest_dir
+    while target and not os.path.isdir(target):
+        parent = os.path.dirname(target.rstrip(os.sep))
+        if parent == target:
+            break
+        target = parent
+    if sample is None or not target or not os.path.isdir(target):
+        return None
+    probe = os.path.join(target, f".marquee-link-probe-{os.getpid()}")
+    try:
+        if os.path.lexists(probe):
+            os.remove(probe)
+        os.link(sample, probe)
+        os.remove(probe)
+        answer = True
+    except OSError:
+        answer = False
+    _PROBES[key] = (time.monotonic(), answer)
+    return answer
+
+
+def _some_file(directory, depth=3):
+    """A regular file somewhere under `directory`, a ROM or disk first."""
+    fallback = None
+    stack = [(directory, 0)]
+    while stack:
+        current, level = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    if entry.name.startswith("."):
+                        continue
+                    if entry.is_file(follow_symlinks=False):
+                        if is_managed(entry.name):
+                            return entry.path
+                        fallback = fallback or entry.path
+                    elif entry.is_dir(follow_symlinks=False) and level < depth:
+                        stack.append((entry.path, level + 1))
+        except OSError:
+            continue
+    return fallback
+
+
 class LocalCopy(CopyBackend):
     """Copies into a directory on this machine.
 

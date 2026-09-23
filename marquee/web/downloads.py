@@ -5,9 +5,10 @@ import posixpath
 import time
 
 from .. import acquire, acquisition, atomic, download, indexers, sources
+from . import fetches
 from ..errors import MarqueeError
 from ..plan import human_bytes
-from .views import filtered, missing_rows
+from .views import filtered, library_sizes, missing_rows
 from .releases import _version_key
 
 
@@ -305,22 +306,28 @@ class DownloadsMixin:
         A machine's weight is its zip plus the disks it needs, and a clone's disk
         lives in its parent's folder -- so the answer needs the plan, which is what
         knows the disk names. Memoised: the library page asks on every keystroke.
+
+        A game the library already holds weighs what its files there weigh. That
+        needs no release at all -- and without it a library of ten thousand games
+        that Marquee had never downloaded read "0 B" on every page.
         """
         plan = self.job.plan
         roms, disks = self.catalogue["roms"], self.catalogue["disks"]
-        if plan is None or not roms:
+        if plan is None:
             return roms or {}
         left_out = getattr(plan, "left_out", None)
         key = (len(plan.items), len(left_out.wanted) if left_out else 0,
                self.catalogue["fetched_at"])
         # The plan itself is held, not id(plan): CPython reuses a freed address, and a
-        # re-plan of the same size could have read back the old plan's sizes.
-        if self._sizes["key"] == key and self._sizes["plan"] is plan:
+        # re-plan of the same size could have read back the old plan's sizes. The
+        # diff likewise: a transfer drops it and the next plan brings a new one.
+        if self._sizes["key"] == key and self._sizes["plan"] is plan \
+                and self._sizes.get("sync") is plan.sync:
             return self._sizes["data"]
 
         # The left-out catalogue too: it is browsed in the same tree and a tree whose
         # every row reads 0 B is not worth drawing.
-        every = plan.wanted + (left_out.wanted if left_out else [])
+        every = plan.wanted + (left_out.wanted if left_out else []) if roms else []
         sizes = {}
         for item in every:
             total = roms.get(item.name, 0)
@@ -331,7 +338,8 @@ class DownloadsMixin:
                         break
             if total:
                 sizes[item.name] = total
-        self._sizes = {"key": key, "plan": plan, "data": sizes}
+        sizes.update(library_sizes(plan))
+        self._sizes = {"key": key, "plan": plan, "sync": plan.sync, "data": sizes}
         return sizes
 
     def torrent_sizes(self):
@@ -414,6 +422,8 @@ class DownloadsMixin:
                                   files, machines, piece_size=piece))
         if part.get("error"):
             raise MarqueeError(part["error"])
+        if not dry_run:
+            self.record_fetch([part], f"{len(machines):,} missing games")
         return {"release": part["release"], "infohash": part["infohash"],
                 "files": part["files"], "bytes": part["bytes"],
                 "bytes_human": part["bytes_human"],
@@ -530,20 +540,26 @@ class DownloadsMixin:
             except MarqueeError as error:
                 parts.append({"kind": "chds", "error": str(error)})
             else:
+                # Which machine asked for each disk: a merged set files a clone's
+                # disk in its parent's folder, and the folder is not the game.
+                owners = {disk: machine for machine, _parent, disk in disks}
                 parts.append(self._one_part(chd_release, client, dry_run,
                                             lambda files, piece: acquire.chd_selection(
-                                                files, disks, piece_size=piece)))
+                                                files, disks, piece_size=piece),
+                                            owners=owners))
 
         usable = [part for part in parts if not part.get("error")]
         if not usable:
             raise MarqueeError(parts[0].get("error") if parts else "Nothing to fetch.")
+        if not dry_run:
+            self.record_fetch(parts, f"{len(chosen):,} games from the Library")
         total = sum(part["bytes"] for part in usable)
         return {"dry_run": dry_run, "chosen": len(chosen), "parts": parts,
                 "machines": len(rom_names), "disks": len(disks),
                 "bytes": total, "bytes_human": human_bytes(total),
                 "set_bytes_human": human_bytes(sum(part["set_bytes"] for part in usable))}
 
-    def _one_part(self, release, client, dry_run, select):
+    def _one_part(self, release, client, dry_run, select, owners=None):
         """Price, and optionally commit, one release's share of a download."""
         infohash, files, fresh, ours = self._ensure_release(release, client)
         piece = None
@@ -609,6 +625,8 @@ class DownloadsMixin:
 
         client.start(infohash)
         part["started"] = True
+        # Written down, so Activity can follow these games rather than a percentage.
+        part["_record"] = fetches.record_of(release, infohash, files, chosen, owners)
         return part
 
     def queue_payload(self):
@@ -654,6 +672,14 @@ class DownloadsMixin:
                            or [None]),
                 "client": config.download_client,
             }
+            # The downloads Marquee started, as jobs: which games, how many are in,
+            # what is left, and what the release never had.
+            try:
+                jobs = self.fetch_jobs(client)
+            except MarqueeError:
+                jobs = []
+            payload["jobs"] = jobs
+            payload["finished_since_plan"] = self.finished_since_plan(jobs)
         self._queue_cache = {"at": time.time(), "data": payload}
         return payload
 

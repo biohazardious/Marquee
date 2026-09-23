@@ -52,6 +52,62 @@ def machine_status(plan):
 MISSING = "missing"
 
 
+def held_sizes(plan):
+    """{library path: size} of every wanted file the library holds, as it is now.
+
+    An UPDATE's own size is the file about to replace it, so the one it holds is
+    `held`. Worked out once per diff: the library page asks on every keystroke.
+    """
+    report = getattr(plan, "sync", None)
+    if report is None:
+        return {}
+    cached = getattr(report, "_held_sizes", None)
+    if cached is not None:
+        return cached
+    held = {}
+    for action in report.actions:
+        if action.kind in (sync.KEEP, sync.MOVE) and action.size:
+            held[action.relpath] = action.size
+        elif action.kind == sync.UPDATE and action.held:
+            held[action.relpath] = action.held
+    report._held_sizes = held
+    return held
+
+
+def library_sizes(plan):
+    """{machine: bytes its files take in the library}. A clone that shares its
+    parent's disk carries it too: this is what it takes to have that game."""
+    held = held_sizes(plan)
+    if not held:
+        return {}
+    out = {}
+    for item in plan.wanted:
+        total = sum(held.get(relpath, 0) for relpath in item.wanted_paths())
+        if total:
+            out[item.name] = total
+    return out
+
+
+def weigh_together(items, sizes, held):
+    """What these games weigh as one pile: a disk two clones share is one file.
+
+    Adding up each game's own weight counted a merged set's shared disks once per
+    clone -- 458 GB for a selection whose library holds 296.
+    """
+    counted, total = set(), 0
+    for item in items:
+        if not (item.rom_source or item.chd_sources) and held:
+            paths = [relpath for relpath in item.wanted_paths() if relpath in held]
+            if paths:
+                for relpath in paths:
+                    if relpath not in counted:
+                        counted.add(relpath)
+                        total += held[relpath]
+                continue
+        total += item.total_bytes or (sizes or {}).get(item.name, 0)
+    return total
+
+
 def filtered(plan, query="", status="", genre="", category="", mature="", have="",
              condition="", reason="", state="", statuses=None, with_excluded=False):
     """The machines the page is currently showing -- on disk or not.
@@ -141,7 +197,7 @@ def machine_rows(plan, query="", status="", genre="", category="", offset=0, lim
         else:
             rows.append(machine_row(item, MISSING, size=sizes.get(item.name, 0)))
     return {"total": len(kept), "offset": offset,
-            "bytes": sum(weigh(item) for item in kept), "rows": rows}
+            "bytes": weigh_together(kept, sizes, held_sizes(plan)), "rows": rows}
 
 
 def left_out_payload(plan, sizes=None, reason="", query="", condition=""):
@@ -770,6 +826,7 @@ def describe(plan, config, cache=None, sizes=None):
                                                plan.sync.to_transfer)
     key = (id(plan), len(plan.items), len(plan.absent_items), compared,
            len(sizes or ()), tuple(sorted((plan.checked or {}).items())),
+           getattr(plan, "checked_at", None),
            config.copy_path if config else None)
     if cache is not None and cache.get("key") == key:
         return cache["payload"]
@@ -794,6 +851,7 @@ def describe(plan, config, cache=None, sizes=None):
         # What checking the library actually found, once something has looked.
         "states": {state: plan.checked[state] for state in verify.STATES
                    if (plan.checked or {}).get(state)},
+        "checked_at": getattr(plan, "checked_at", None),
         "missing_chds": len(plan.missing_chds),
         # Neither in the source folder nor in the library: what a download brings.
         "disks_to_fetch": len(plan.disks_to_fetch),
@@ -849,6 +907,7 @@ def _weigh_the_wanted(plan, payload, sizes):
     The release's own file table is where the other figure comes from.
     """
     by_genre, by_category, counted = {}, {}, set()
+    held = held_sizes(plan)
     for item in plan.wanted:
         # Each destination file once. A merged clone names its parent's disk on
         # purpose, and counting it twice inflates exactly the figure being decided on.
@@ -859,7 +918,16 @@ def _weigh_the_wanted(plan, payload, sizes):
             counted.add(relpath)
             weight += size
         if not (item.rom_source or item.chd_sources):
-            weight = (sizes or {}).get(item.name, 0)
+            # In the library: what its files there weigh, each file once.
+            paths = [relpath for relpath in item.wanted_paths() if relpath in held]
+            if paths:
+                weight = 0
+                for relpath in paths:
+                    if relpath not in counted:
+                        counted.add(relpath)
+                        weight += held[relpath]
+            else:
+                weight = (sizes or {}).get(item.name, 0)
         by_genre[item.genre] = by_genre.get(item.genre, 0) + weight
         by_category[item.category] = by_category.get(item.category, 0) + weight
     for entry in payload["genres"]:

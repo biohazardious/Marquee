@@ -4,7 +4,7 @@
    the library on the console -- and until now no page said which step you were on.
    Seven pages of numbers is not the same as one answer to "what now?". */
 
-import { $, append, banner, clear, count, el, human, plural, pressable } from './util.js';
+import { $, ago, append, banner, clear, count, el, human, plural, pressable } from './util.js';
 import { post, state } from './api.js';
 import { icon } from './icons.js';
 
@@ -44,6 +44,14 @@ export function nextStep(data) {
              text: 'The plan was built from an earlier selection or different folders. Rebuild it before trusting the numbers.',
              action: 'Rebuild plan', run: 'plan' };
   }
+  // A download finished after this plan was built: what arrived is not in it yet.
+  // Plan first, then the transfer page has something to say about it.
+  const arrived = data.queue?.finished_since_plan;
+  if (arrived && arrived.games) {
+    return { tone: 'good', title: `${plural(arrived.games, 'game', 'games')} arrived since the plan was built`,
+             text: `${arrived.bytes_human} finished downloading. Build the plan to take them in, then Transfer puts them in the library.`,
+             action: 'Build plan', run: 'plan' };
+  }
   const missing = plan.missing_roms || 0;
   const transfer = (plan.sync?.new?.count || 0) + (plan.sync?.update?.count || 0)
     + (plan.sync?.move?.count || 0);
@@ -69,11 +77,13 @@ export function nextStep(data) {
   }
   if (!Object.keys(plan.states || {}).length) {
     return { tone: 'info', title: 'Everything is in place',
-             text: 'Nothing has looked inside the files yet. A check reads every zip and compares it with the release.',
+             text: 'Every game the selection wants is in the library, by name and size. '
+               + 'Checking it as well opens each file and compares it with the release — optional, and slow over a share.',
              action: 'Check the library', run: 'check' };
   }
+  const when = plan.checked_at ? ` (checked ${ago(plan.checked_at)})` : '';
   return { tone: 'good', title: 'Up to date',
-           text: `The library holds what the selection asks for, and every file that was checked matches MAME ${data.resolution?.xml_version || ''}.`.trim(),
+           text: `The library holds what the selection asks for, and every file that was checked matches MAME ${data.resolution?.xml_version || ''}${when}.`,
            action: 'Browse the library', page: 'library' };
 }
 
@@ -141,9 +151,12 @@ function pipeline(data) {
   const partial = plan?.partial_roms || 0;
   const source = stage({
     name: 'Source', icon: 'folder', page: 'settings',
-    state: !config.rom_dir ? 'off' : roms?.files ? (partial ? 'warn' : 'on') : 'warn',
+    // An empty torrent folder is only a problem while something is still missing:
+    // once the library holds the lot, there is nothing that has to be there.
+    state: !config.rom_dir ? 'off' : roms?.files ? (partial ? 'warn' : 'on')
+      : (plan && !missing ? 'off' : 'warn'),
     value: plan ? count(onDisk) : (roms ? count(roms.files) : (config.rom_dir ? '…' : '—')),
-    unit: plan ? `games downloaded${roms ? ` · ${roms.bytes_human || human(roms.bytes)} in the folder` : ''}`
+    unit: plan ? 'games in the torrent folder, ready to transfer'
       : roms ? `files · ${roms.bytes_human || human(roms.bytes)}` : (config.rom_dir ? 'looking' : 'no folder set'),
     note: partial ? `${count(partial)} more still downloading` : (config.rom_dir ? shorten(config.rom_dir) : 'Where the romset is.'),
   });
@@ -232,9 +245,11 @@ function healthPanel(data) {
       watch.newer ? `MAME ${watch.newest} is out; this library holds ${watch.library}`
         : watch.newest ? `MAME ${watch.newest} is the newest published` : 'release list not read yet'),
     line(!plan ? 'off' : !checked ? 'off' : (stale || damaged) ? 'warn' : 'good', 'Library check',
-      !plan ? 'no plan yet' : !checked ? 'nothing has looked inside the files yet'
-        : (stale || damaged) ? `${plural(stale + damaged, 'file', 'files')} are out of date or damaged`
-        : `${plural(plan.states.current || 0, 'file', 'files')} match the release`),
+      !plan ? 'no plan yet' : !checked ? 'not checked yet — optional; it opens every file'
+        : (stale || damaged) ? `${plural(stale + damaged, 'game', 'games')} out of date or damaged`
+          + (plan.checked_at ? ` · checked ${ago(plan.checked_at)}` : '')
+        : `${plural((plan.states.current || 0) + (plan.states.incomplete || 0), 'game', 'games')} match the release`
+          + (plan.checked_at ? ` · checked ${ago(plan.checked_at)}` : '')),
     plan?.fits === false
       ? line('bad', 'Free space', `short by ${plan.short_human} for the next transfer`)
       : null,
@@ -261,7 +276,7 @@ function spacePanel(data) {
   const body = el('div', { class: 'body' });
   if (!plan || !plan.free_human) {
     body.append(el('div', { class: 'muted', text: plan
-      ? 'Free space is only known for a library on a local path.'
+      ? 'This library is on a share, which does not tell Marquee how much room is left. Check the console\u2019s disk before a large transfer.'
       : 'Build a plan to see what the next transfer needs.' }));
   } else {
     const needed = parseBytes(plan.needed_human);
@@ -291,7 +306,7 @@ function historyPanel(data) {
   const history = data.destination?.history || [];
   const body = el('div', { class: 'body tight' });
   if (!history.length) {
-    body.append(el('div', { class: 'body muted', text: 'No transfer has run into this library yet.' }));
+    body.append(el('div', { class: 'body muted', text: 'No run recorded in this library yet. Each transfer from now on is listed here.' }));
   } else {
     body.append(el('table', { class: 'grid' }, el('tbody', {},
       [...history].reverse().map((run) => el('tr', { style: 'cursor:default' },

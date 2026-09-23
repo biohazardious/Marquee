@@ -1,5 +1,6 @@
 """The web front end: job lifecycle, the JSON API, and the token gate."""
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -1366,6 +1367,114 @@ class TestCheckingTheLibrary:
         app.job.state = "planned"
 
 
+
+class TestACheckIsKept:
+    """A check opens every file -- ten minutes over a share -- and its answer used to
+    go with the plan it was made on. The next "Build plan", or a container restart,
+    and the Overview said nothing had ever looked inside the files."""
+
+    @pytest.fixture
+    def checked(self, server, xml_path, catlist_path, romset):
+        base, app = server
+        for path, payload, until in (("/api/plan", {"xml": xml_path, "catlist": catlist_path}, "planned"),
+                                     ("/api/copy", {}, "done"),
+                                     ("/api/plan", {"xml": xml_path, "catlist": catlist_path}, "planned"),
+                                     ("/api/check", {}, "planned")):
+            post(base, path, payload)
+            wait_for(app.job, until, "error")
+            assert app.job.state == until, app.job.error
+        assert app.job.checked
+        return base, app
+
+    def replan(self, base, app, xml_path, catlist_path):
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        assert app.job.state == "planned", app.job.error
+
+    def test_a_new_plan_keeps_it(self, checked, xml_path, catlist_path):
+        base, app = checked
+        before = dict(app.job.checked)
+        self.replan(base, app, xml_path, catlist_path)
+        assert app.job.checked == before
+        plan = get(base, "/api/state")["plan"]
+        assert plan["states"] and plan["checked_at"]
+
+    def test_so_does_a_restart(self, checked, xml_path, catlist_path):
+        base, app = checked
+        before = dict(app.job.checked)
+        app.job.reset()
+        assert app.job.checked is None
+        self.replan(base, app, xml_path, catlist_path)
+        assert app.job.checked == before
+
+    def test_a_file_that_changed_is_not_vouched_for(self, checked, romset,
+                                                   xml_path, catlist_path):
+        base, app = checked
+        name = next(item.name for item in app.job.plan.items if item.state)
+        folder = next(item.folder for item in app.job.plan.items if item.name == name)
+        # Changed in the source as well, so the library copy is the one planned to stay.
+        with open(os.path.join(romset["out_dir"], folder, f"{name}.zip"), "ab") as handle:
+            handle.write(b"more")
+        with open(os.path.join(romset["rom_dir"], f"{name}.zip"), "ab") as handle:
+            handle.write(b"more")
+        self.replan(base, app, xml_path, catlist_path)
+        item = next(item for item in app.job.plan.items if item.name == name)
+        assert not item.state
+        assert any(other.state for other in app.job.plan.items if other.name != name)
+
+    def test_another_release_does_not_inherit_it(self, checked):
+        _base, app = checked
+        from marquee.web import checks
+        assert checks.restore(app.job.plan, app.job.config.copy_path, "0.001") == (None, None)
+        assert checks.restore(app.job.plan, "/elsewhere", app.job.resolution.xml_version) \
+            == (None, None)
+
+    def test_what_a_transfer_wrote_is_forgotten(self, checked, monkeypatch,
+                                                xml_path, catlist_path):
+        """A same-size redump replacing a stale zip must not inherit its verdict, or
+        it is replaced again on every run for ever."""
+        base, app = checked
+        from marquee import sources
+        monkeypatch.setattr(sources, "rom_manifests",
+                            lambda *args, **kwargs: {
+                                "goodgame": [("goodgame.1", "deadbeef", False)]})
+        post(base, "/api/check", {})
+        wait_for(app.job, "planned", "error")
+        self.replan(base, app, xml_path, catlist_path)
+        kinds = {entry["kind"]: entry for entry in get(base, "/api/changes")["kinds"]}
+        assert kinds["update"]["files"] == 1, "a kept stale verdict still means replace"
+
+        post(base, "/api/copy", {})
+        wait_for(app.job, "done", "error")
+        self.replan(base, app, xml_path, catlist_path)
+        kinds = {entry["kind"]: entry for entry in get(base, "/api/changes")["kinds"]}
+        assert kinds["update"]["files"] == 0
+        goodgame = next(item for item in app.job.plan.items if item.name == "goodgame")
+        assert not goodgame.state
+
+
+class TestALibraryGameHasASize:
+    """The Library read "sizes unknown until the release is read" over ten thousand
+    games whose files were sitting right there: a game was weighed by the torrent
+    folder or the release, never by the library."""
+
+    def test_its_files_in_the_library_weigh_it(self, server, xml_path, catlist_path,
+                                               romset):
+        base, app = server
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        post(base, "/api/copy", {})
+        wait_for(app.job, "done", "error")
+        for name in os.listdir(romset["rom_dir"]):
+            os.remove(os.path.join(romset["rom_dir"], name))
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "planned", "error")
+        found = get(base, "/api/machines?limit=500")
+        assert found["bytes"] > 0
+        goodgame = next(row for row in found["rows"] if row["name"] == "goodgame")
+        assert goodgame["bytes"] == 300
+        assert get(base, "/api/state")["plan"]["wanted_bytes"] > 0
+
 class TestAFilterIsNotAnEmptyCatalogue:
     """Searching Left out for something it does not have wiped the page -- the filter
     bar with it, so there was no way back to what you had typed. The page can only
@@ -2481,3 +2590,146 @@ class TestAStartedTask:
         _base, app = server
         task = {"running": True}
         assert app._start(task, lambda: None) is False
+
+
+class TestTheHardlinkSetting:
+    def test_automatic_is_reported_with_what_it_comes_to(self, server):
+        base, _app = server
+        post(base, "/api/save", {"hardlink": "auto"})
+        config = get(base, "/api/state")["config"]
+        assert config["hardlink"] == "auto"
+        assert isinstance(config["hardlink_effective"], bool)
+
+    def test_it_can_be_pinned_and_set_back_to_automatic(self, server):
+        base, app = server
+        post(base, "/api/save", {"hardlink": False})
+        assert app.current_config().hardlink is False
+        post(base, "/api/save", {"hardlink": "auto"})
+        assert app.current_config().hardlink is None
+
+
+class TestReclaimingSpace:
+    """The one act that takes finished data away: Marquee's own torrents only, only
+    when the library has every file, priced first, and only when asked by name."""
+
+    @pytest.fixture
+    def rig(self, server, tmp_path):
+        from types import SimpleNamespace
+        from marquee import sync as sync_module
+        base, app = server
+        torrents = tmp_path / "torrents" / "MAME 0.289 ROMs (non-merged)"
+        torrents.mkdir(parents=True)
+        library = tmp_path / "lib"
+        (library / "Maze").mkdir(parents=True)
+        files = {}
+        for name in ("pacman", "galaga"):
+            path = torrents / f"{name}.zip"
+            path.write_bytes(b"x" * 100)
+            files[name] = path
+        (library / "Maze" / "pacman.zip").write_bytes(b"x" * 100)
+        post(base, "/api/save", {"copy_path": str(library)})
+        actions = [sync_module.Action(sync_module.KEEP, "Maze/pacman.zip",
+                                      str(files["pacman"]), size=100)]
+        app.job.plan = SimpleNamespace(sync=SimpleNamespace(actions=actions))
+        state = {"torrents": [], "deleted": []}
+        app._torrent_files = lambda config: state["torrents"]
+
+        class Client:
+            def delete(self, infohash, delete_files=False):
+                state["deleted"].append((infohash, delete_files))
+        app.client = lambda overrides=None: Client()
+        return base, app, files, library, state
+
+    def torrent(self, infohash, category, paths, progress=1.0):
+        entry = {"hash": infohash, "name": infohash, "category": category}
+        return (entry, [(str(path), {"size": 100, "progress": progress}) for path in paths])
+
+    def test_a_torrent_whose_files_are_all_in_the_library_is_priced(self, rig):
+        base, _app, files, _library, state = rig
+        state["torrents"] = [self.torrent("aa" * 20, "marquee", [files["pacman"]])]
+        price = get(base, "/api/reclaim")
+        assert price["torrents"][0]["reclaimable"] is True
+        assert price["freed"] == 100
+
+    def test_a_file_not_in_the_library_blocks_it(self, rig):
+        base, _app, files, _library, state = rig
+        state["torrents"] = [self.torrent("aa" * 20, "marquee",
+                                          [files["pacman"], files["galaga"]])]
+        row = get(base, "/api/reclaim")["torrents"][0]
+        assert row["reclaimable"] is False and "only copy" in row["blocked"]
+
+    def test_a_download_still_arriving_blocks_it(self, rig):
+        base, _app, files, _library, state = rig
+        state["torrents"] = [self.torrent("aa" * 20, "marquee", [files["pacman"]], 0.5)]
+        assert "still arriving" in get(base, "/api/reclaim")["torrents"][0]["blocked"]
+
+    def test_a_skipped_file_touched_by_a_shared_piece_is_not_arriving(self, rig):
+        """A deselected file shows a sliver of progress from the pieces it shares with
+        a wanted neighbour; that data is in the client's part file, not in the file."""
+        base, _app, files, _library, state = rig
+        entry, named = self.torrent("aa" * 20, "marquee", [files["pacman"]])
+        named.append((str(files["galaga"]) + ".nowhere", {"size": 100, "progress": 1.0,
+                                                          "priority": 0}))
+        state["torrents"] = [(entry, named)]
+        row = get(base, "/api/reclaim")["torrents"][0]
+        assert row["reclaimable"] is True and row["files"] == 1
+
+    def test_a_deselected_file_really_on_disk_still_blocks(self, rig):
+        """Deselected by hand after it finished: the file is there, and not in the
+        library, so removing the torrent would delete it."""
+        base, _app, files, _library, state = rig
+        entry, named = self.torrent("aa" * 20, "marquee", [files["pacman"]])
+        named.append((str(files["galaga"]), {"size": 100, "progress": 1.0, "priority": 0}))
+        state["torrents"] = [(entry, named)]
+        assert get(base, "/api/reclaim")["torrents"][0]["reclaimable"] is False
+
+    def test_somebody_elses_torrent_is_not_even_listed(self, rig):
+        base, _app, files, _library, state = rig
+        state["torrents"] = [self.torrent("bb" * 20, None, [files["pacman"]])]
+        assert get(base, "/api/reclaim")["torrents"] == []
+
+    def test_a_hardlinked_library_frees_nothing_and_says_so(self, rig):
+        base, _app, files, library, state = rig
+        target = library / "Maze" / "pacman.zip"
+        target.unlink()
+        os.link(files["pacman"], target)
+        state["torrents"] = [self.torrent("aa" * 20, "marquee", [files["pacman"]])]
+        row = get(base, "/api/reclaim")["torrents"][0]
+        assert row["freed"] == 0 and row["linked"] == 1
+
+    def test_removal_is_only_what_was_asked_and_allowed(self, rig):
+        base, _app, files, _library, state = rig
+        state["torrents"] = [self.torrent("aa" * 20, "marquee", [files["pacman"]]),
+                             self.torrent("cc" * 20, "marquee", [files["galaga"]])]
+        with pytest.raises(urllib.error.HTTPError):
+            post(base, "/api/reclaim", {})
+        with pytest.raises(urllib.error.HTTPError):
+            post(base, "/api/reclaim", {"hashes": ["cc" * 20]})
+        assert state["deleted"] == []
+        done = post(base, "/api/reclaim", {"hashes": ["aa" * 20]})
+        assert done["removed"] == 1 and done["freed"] == 100
+        assert state["deleted"] == [("aa" * 20, True)]
+
+
+class TestAFirstPlanWithAnEmptyTorrentFolder:
+    """Nothing chosen, nothing downloaded yet, so nothing is named after a release:
+    the plan used to stop and ask for one. The newest published set is the answer."""
+
+    def test_the_newest_listed_rom_set_is_used(self, server, monkeypatch):
+        from marquee import fetch, pipeline
+        _base, app = server
+        app.releases["data"] = [
+            {"kind": "roms", "full_set": True, "version": "0.288"},
+            {"kind": "roms", "full_set": True, "version": "0.289"},
+            {"kind": "chds", "full_set": True, "version": "0.290"},
+        ]
+        asked = []
+        monkeypatch.setattr(fetch, "fetch_xml",
+                            lambda version, **kw: asked.append(version) or "/nowhere.xml")
+        options = pipeline.SourceOptions(newest_published=app.newest_published)
+        config = configuration.Config(rom_dir="/empty", copy_path="/o")
+        monkeypatch.setattr(pipeline.sources, "find_mame_xml", lambda *a, **k: None)
+        monkeypatch.setattr(pipeline.sources, "generate_listxml", lambda *a, **k: None)
+        monkeypatch.setattr(pipeline.sources, "locate_set", lambda *a, **k: "/empty")
+        assert pipeline.resolve_mame_xml(config, options, pipeline.Reporter()) == "/nowhere.xml"
+        assert asked == ["0.289"]

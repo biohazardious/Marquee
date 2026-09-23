@@ -39,6 +39,9 @@ class SourceOptions:
     # A callable returning {source path: fraction downloaded} from the download
     # client, or None. The web app supplies it; the command line has no client.
     source_progress: object = None
+    # A callable returning the newest MAME release the indexer lists, or None: the
+    # last word on which release to plan for when nothing else names one.
+    newest_published: object = None
 
     def hints(self, config):
         found = [os.path.join(PROJECT_ROOT, "MameFiles"), PROJECT_ROOT]
@@ -182,6 +185,21 @@ def resolve_mame_xml(config, options, reporter):
                       f"choose another.")
         return fetch.fetch_xml(guessed, reporter=reporter)
 
+    # A first run: no release chosen, and the torrent folder is empty because nothing
+    # has been downloaded yet -- so nothing is named after anything. The newest set
+    # published is what anyone starting from nothing is about to download.
+    newest = options.newest_published
+    if callable(newest):
+        try:
+            newest = newest()
+        except Exception:  # noqa: BLE001 - an index that will not answer is not fatal
+            newest = None
+    if newest and not options.offline:
+        reporter.info(f"No MAME version is set and nothing in the ROM folder names one "
+                      f"yet, so the newest published release, MAME {newest}, is used. "
+                      f"Set it in Settings to choose another.")
+        return fetch.fetch_xml(newest, reporter=reporter)
+
     raise SourceNotFoundError(
         "No MAME version is chosen and no mame*.xml is on disk. Pick the release in "
         "Settings and the XML is downloaded for you; or pass --xml PATH, or set "
@@ -270,7 +288,7 @@ def build_plan(config, options=None, reporter=None):
     if not resolution.destination_exists:
         reporter.warn(f"The library folder does not exist yet: {config.copy_path}. "
                       f"It will be created. If you expected it to be there already, "
-                      f"check the path -- inside a container it has to be the path the "
+                      f"check the path \u2014 inside a container it has to be the path the "
                       f"container sees.")
     resolution.destination = manifest.describe(manifest.read(config.copy_path))
     if resolution.destination and resolution.destination.get("mame_version"):
@@ -301,7 +319,7 @@ def build_plan(config, options=None, reporter=None):
     catlist = configparser.ConfigParser(allow_no_value=True)
     catlist.read(resolution.catlist_file)
 
-    reporter.stage("It's time to categorize that huge list!.")
+    reporter.stage("Sorting the machines into genres and categories...")
     resolution.genres = sorted(sources.derive_genres(catlist))
     mame_list = catalog.categorize(mame_list, catlist, config, reporter)
     if config.parents_only:
@@ -312,7 +330,7 @@ def build_plan(config, options=None, reporter=None):
     for label, chosen, given in (("ROM", rom_dir, config.rom_dir),
                                  ("CHD", chd_dir, config.chd_dir)):
         if chosen != given:
-            reporter.info(f"{label} folder: using {chosen} -- the set is in there, not "
+            reporter.info(f"{label} folder: using {chosen} \u2014 the set is in there, not "
                           f"directly in {given}.")
     resolution.rom_dir, resolution.chd_dir = rom_dir, chd_dir
 
@@ -388,11 +406,11 @@ def _left_out(rejects, catlist, config, rom_dir, chd_dir, reporter, progress=Non
 def compare_destination(built, config, reporter=None):
     """Index the destination and work out what actually has to move."""
     reporter = reporter or Reporter()
-    reporter.stage("Checking what is already at the destination..")
+    reporter.stage("Checking what is already in the library...")
     backend = None
     try:
         backend = backends.for_destination(config.copy_path, reporter=reporter,
-                                           hardlink=config.hardlink)
+                                           hardlink=backends.effective_hardlink(config))
         existing = backend.index()
         leftovers = list(getattr(backend, "leftovers", ()) or ())
         # The record of a library on a share is read here, on a connection that is
@@ -435,7 +453,7 @@ def execute(built, config, reporter=None, backend=None, should_continue=None,
     reporter = reporter or Reporter()
     owned = backend is None
     backend = backend or backends.for_destination(config.copy_path, reporter=reporter,
-                                                  hardlink=config.hardlink)
+                                                  hardlink=backends.effective_hardlink(config))
     try:
         return _execute(built, config, reporter, backend, should_continue,
                         delete_orphans, mame_version)
@@ -538,7 +556,7 @@ def _execute(built, config, reporter, backend, should_continue, delete_orphans,
         reporter.warn("Stopped. Whatever arrived is kept; the next run continues.")
 
     if config.write_gamelist and not summary.cancelled:
-        reporter.stage("Writing gamelists..")
+        reporter.stage("Writing gamelists...")
         try:
             result = gamelist.write(
                 built.library_items, backend, copy_images=config.copy_artwork,

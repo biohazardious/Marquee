@@ -73,6 +73,18 @@ export function duration(seconds) {
   return `${Math.floor(seconds)}s`;
 }
 
+/* "just now", "40 minutes ago", "3 days ago" for a unix time in seconds. */
+export function ago(when) {
+  if (!when) return '';
+  const seconds = Math.max(0, Date.now() / 1000 - when);
+  if (seconds < 90) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${plural(minutes, 'minute', 'minutes')} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `${plural(hours, 'hour', 'hours')} ago`;
+  return `${plural(Math.round(hours / 24), 'day', 'days')} ago`;
+}
+
 export function debounce(fn, wait = 220) {
   let timer;
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), wait); };

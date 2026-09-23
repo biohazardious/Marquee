@@ -64,11 +64,15 @@ class Config:
     # Hardlink the library out of the torrent folder when both sit on one filesystem:
     # the categorised copy then costs nothing and seeding carries on undisturbed.
     #
-    # Off by default, because it is not free of consequence: a hardlinked file is the
-    # *same* file, so anything that writes to a library ROM writes through to the
-    # torrent folder and breaks the set you are seeding. Worth turning on -- it halves
-    # the disk a 343 GB library needs -- but worth turning on deliberately.
-    hardlink: bool = False
+    # None is "automatic": on exactly when a link from the torrent folder into the
+    # library actually works (see backends.effective_hardlink), which is the only
+    # honest test -- two bind mounts of one disk share a device number and still
+    # refuse. A first run should not have to know what a filesystem is to get the
+    # 343 GB library that costs nothing extra. True and False pin it. Nothing in
+    # Marquee writes into a library file in place, so the link cannot be written
+    # through by us; an emulator that writes into a ROM would, which is why it can
+    # still be turned off.
+    hardlink: object = None
 
     # Optional overrides; everything here is discovered when left unset.
     mame_xml: str = None
@@ -177,10 +181,13 @@ def read_settings_file(path):
         if values.get(key):
             setattr(config, key, values[key])
 
-    for key, fallback in (("hardlink", False), ("parents_only", False),
+    for key, fallback in (("parents_only", False),
                           ("write_gamelist", True), ("copy_artwork", True)):
         if key in values:
             setattr(config, key, flag(key, fallback))
+    # "auto", blank or absent is automatic; anything else is a yes or a no.
+    if (values.get("hardlink") or "").strip().lower() not in ("", "auto", "automatic"):
+        config.hardlink = flag("hardlink", False)
 
     config.obsolete_keys = [key for key in ("genre_ini",) if values.get(key)]
     return config
@@ -275,7 +282,7 @@ def _acquisition_block(config):
     its credentials and the path mappings.
     """
     if not config.download_client:
-        return ACQUISITION_EXAMPLE.format(hardlink=config.hardlink)
+        return ACQUISITION_EXAMPLE.format(hardlink=_hardlink(config.hardlink))
     return (
         f"download_client = {config.download_client}\n"
         f"download_username = {config.download_username or ''}\n"
@@ -283,7 +290,12 @@ def _acquisition_block(config):
         f"download_dir = {config.download_dir or ''}\n"
         f"; One \"remote -> local\" per line when the client sees a different path.\n"
         f"remote_path_mappings ={_space(config.remote_path_mappings)}\n"
-        f"hardlink = {config.hardlink}\n")
+        f"hardlink = {_hardlink(config.hardlink)}\n")
+
+
+def _hardlink(value):
+    """How the setting is written: auto, True or False."""
+    return "auto" if value is None else str(bool(value))
 
 
 def _blank(value):

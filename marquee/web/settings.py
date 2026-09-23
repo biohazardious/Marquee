@@ -156,7 +156,10 @@ class SettingsMixin:
             "download_password": "••••••••" if config.download_password else "",
             "download_dir": config.download_dir or "",
             "remote_path_mappings": config.remote_path_mappings or "",
-            "hardlink": config.hardlink,
+            # "auto", true or false as saved; and what that means right now, so the
+            # form can say "Automatic -- on" rather than leave it to be guessed.
+            "hardlink": "auto" if config.hardlink is None else bool(config.hardlink),
+            "hardlink_effective": backends.effective_hardlink(config),
         }
 
     def config_from(self, body):
@@ -187,10 +190,12 @@ class SettingsMixin:
             raise MarqueeError("download_password should be text.")
         if "download_password" in body and set(body["download_password"] or "") != {"\u2022"}:
             overrides["download_password"] = body["download_password"]
-        for key in ("allow_mature", "hardlink", "parents_only", "write_gamelist",
-                    "copy_artwork"):
+        for key in ("allow_mature", "parents_only", "write_gamelist", "copy_artwork"):
             if body.get(key) is not None:
                 overrides[key] = body[key]
+        hardlink = body.get("hardlink")
+        if hardlink is not None and hardlink != "auto":
+            overrides["hardlink"] = bool(hardlink)
         # A blacklist is only ever taken from something that is actually a list. The
         # page omits them entirely until it has read the saved ones, and anything else
         # arriving here is a bug somewhere, not an instruction to clear them.
@@ -203,6 +208,9 @@ class SettingsMixin:
         if version:
             overrides["mame_version"] = version
         config = self.current_config().with_overrides(**overrides)
+        if hardlink == "auto":
+            # with_overrides ignores None, which is exactly what automatic is.
+            config.hardlink = None
         if "mame_version" in body and not version:
             # The form's "Automatic": with_overrides ignores None, so cleared has to be
             # said explicitly or the old choice would survive every save.
