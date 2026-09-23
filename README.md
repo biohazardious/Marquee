@@ -4,6 +4,10 @@
 [![Docker Hub](https://img.shields.io/docker/v/biohazardious/marquee?label=docker&sort=semver)](https://hub.docker.com/r/biohazardious/marquee)
 [![Licence: GPL v3](https://img.shields.io/badge/licence-GPL--3.0-blue.svg)](LICENSE)
 
+<p align="center">
+  <img src="docs/screenshots/library.png" alt="Marquee's Library page: a poster grid of fighting games already on the console — Street Fighter III, Killer Instinct, Mace, War Gods, The King of Fighters — with captioned filters for genre, download state, emulation quality and adult titles" width="100%">
+</p>
+
 A MAME library manager in the shape of Sonarr/Radarr: you declare what you want, it
 acquires only that, keeps it categorised, and moves it forward a version at a time
 without re-downloading the world.
@@ -29,13 +33,68 @@ for how they are arrived at and why the approach works.
 It is built for EmulationStation systems like Batocera, RecalBox and RetroPie, but works
 anywhere you need a categorised MAME set.
 
+## At a glance
+
+- **Choose by genre, category or single game.** One tree, shaped like the folders on
+  your console, with the game count and the gigabytes each choice costs.
+- **Fetch only what you chose.** Marquee narrows the Pleasuredome torrents in
+  qBittorrent to the files you picked, prices it before anything starts, and never
+  deselects a file you are already seeding.
+- **Upgrade a release at a time.** It compares two MAME catalogues and fetches only the
+  machines whose bytes changed.
+- **Prove what is on the console.** Every zip is read against the release's CRCs, and
+  every disk can be hashed against the torrent's own pieces — a copy that stopped
+  half-way is found, not assumed.
+- **Write straight to the console.** A local folder, SMB, FTP or SFTP; a
+  `gamelist.xml` that keeps EmulationStation's favourites and play counts; title
+  screens from libretro-thumbnails, matched by name, no scraper.
+- **Run it anywhere.** One Docker image for amd64 and arm64, no database, a web UI that
+  works from a phone. See [Running it](#running-it).
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/overview.png" alt="Overview: 11,987 games selected, 10,022 already in the library, 1,975 still to fetch, and the health of the setup"></td>
+    <td width="50%"><img src="docs/screenshots/game-details.png" alt="A game's details: Street Fighter III 3rd Strike with its title screen, year, controls, screen, and where it is filed"></td>
+  </tr>
+  <tr>
+    <td><b>Overview</b> — the four stages from source folder to console, each with the
+      number that matters, and one recommendation for what to do next.</td>
+    <td><b>Every game</b> — title screen, year, manufacturer, controls, screen, the
+      folder it goes to, and whether its files match the release.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/selection.png" alt="Selection: the Shooter genre open to Flying Vertical, each game with a tick box, its flags and its size"></td>
+    <td><img src="docs/screenshots/transfer.png" alt="Transfer: what the next run will copy, replace, move, delete and leave alone, before it runs"></td>
+  </tr>
+  <tr>
+    <td><b>Selection</b> — tick a genre, a category or one game; the counts and sizes
+      are what that choice actually costs.</td>
+    <td><b>Transfer</b> — what the next run will do, before it does it: 10,017 games
+      left alone, 5 files renamed rather than copied again.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/wanted.png" alt="Wanted: 1,975 games missing, 36.6 GB to download, 27 disks to fetch"></td>
+    <td align="center">
+      <img src="docs/screenshots/phone-overview.png" alt="Overview on a phone" width="46%">
+      <img src="docs/screenshots/phone-library.png" alt="Library posters on a phone" width="46%">
+    </td>
+  </tr>
+  <tr>
+    <td><b>Wanted</b> — what the selection still lacks, priced from the release
+      torrent, one button away from the download client.</td>
+    <td><b>On a phone</b> — the same pages, laid out for a small screen.</td>
+  </tr>
+</table>
+
 > Marquee ships no ROMs, no disk images and no MAME data. It reads the machine list
 > MAME itself publishes, the category files the MAME community maintains, and whatever
 > your own download client has fetched. See [Credits](#credits-and-upstream-sources).
 
 ## Contents
 
-[Running it](#running-it) · [The pages](#the-pages) · [Starting from nothing](#starting-from-nothing) ·
+[At a glance](#at-a-glance) · [Screenshots](#screenshots) · [Running it](#running-it) · [The pages](#the-pages) · [Starting from nothing](#starting-from-nothing) ·
 [Keeping a library current](#keeping-a-library-current) · [What it does](#what-it-does) ·
 [How it works](#how-it-works) · [Command line](#command-line) · [Development](#development) ·
 [Credits](#credits-and-upstream-sources) · [Licence](#licence)

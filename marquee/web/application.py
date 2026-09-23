@@ -112,7 +112,12 @@ class Application(SettingsMixin, DownloadsMixin, ReleasesMixin, TasksMixin):
         kind = (body or {}).get("kind") or art.DEFAULT_KIND
         if kind not in art.KINDS:
             raise MarqueeError(f"Unknown artwork kind: {kind}")
-        descriptions = [item.description for item in plan.items]
+        # Every game the Library page shows, not only the ones in the source folder:
+        # with the torrent folder empty and 10,022 games already on the console it
+        # fetched nothing, and reported that as "Artwork done".
+        descriptions = list(dict.fromkeys(item.description for item in plan.wanted))
+        if not descriptions:
+            raise MarqueeError("The plan has no games to find pictures for.")
         # Stop only flips the flag; the worker notices a moment later. A start in that
         # moment used to pass the guard, and the old worker's exit then switched the
         # new one off. Each run has a generation and only reads and writes its own.

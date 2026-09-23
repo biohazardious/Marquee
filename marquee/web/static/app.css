@@ -590,7 +590,10 @@ ul.health li { display: grid; grid-template-columns: 18px minmax(120px, max-cont
   border-bottom: 1px solid var(--line-soft); font-size: 13.5px; }
 ul.health li:last-child { border-bottom: 0; }
 ul.health li b { font-weight: 600; min-width: 128px; }
-ul.health li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The explanation, not the icon: the icon is a span too, and a rule for "span" moved
+   it into the text's column on phones. */
+ul.health li > span:not(.ico) { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
 ul.health li.good .ico { color: var(--good); }
 ul.health li.warn .ico { color: var(--warn); }
 ul.health li.bad .ico { color: var(--bad); }
@@ -629,5 +632,5 @@ ul.health li.off .ico { color: var(--dim); }
   /* The icon keeps its column; the explanation goes under the label. */
   ul.health li { grid-template-columns: 18px minmax(0, 1fr); row-gap: 2px; }
   ul.health li b { min-width: 0; }
-  ul.health li span { grid-column: 2; white-space: normal; overflow-wrap: anywhere; }
+  ul.health li > span:not(.ico) { grid-column: 2; white-space: normal; overflow-wrap: anywhere; }
 }

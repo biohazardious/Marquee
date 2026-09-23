@@ -198,13 +198,38 @@ class TestArtwork:
     def test_a_download_reports_a_total_and_can_be_stopped(self, planned):
         base, app = planned
         started = post(base, "/api/art/download", {"kind": "Named_Titles"})
-        assert started["total"] == len(app.job.plan.items)
+        assert started["total"] == len({item.description for item in app.job.plan.wanted})
         post(base, "/api/art/stop", {})
         for _ in range(200):
             if not app.art["running"]:
                 break
             time.sleep(0.05)
         assert app.art["running"] is False
+
+
+class TestArtworkCoversTheWholeLibrary:
+    """With the torrent folder empty and the library full, Artwork found nothing to
+    illustrate: it only looked at what was in the source folder."""
+
+    @pytest.fixture
+    def planned(self, server, xml_path, catlist_path):
+        return planned_server(server, xml_path, catlist_path)
+
+    def test_games_only_in_the_library_are_included(self, planned):
+        base, app = planned
+        plan = app.job.plan
+        moved = list(plan.items)
+        plan.absent_items = plan.absent_items + moved
+        plan.items = []
+        try:
+            started = post(base, "/api/art/download", {"kind": "Named_Titles"})
+            assert started["total"] == len({item.description for item in plan.wanted}) > 0
+        finally:
+            post(base, "/api/art/stop", {})
+            for _ in range(200):
+                if not app.art["running"]:
+                    break
+                time.sleep(0.05)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
