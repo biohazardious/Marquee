@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and setups
+    url: https://github.com/biohazardious/Marquee/discussions
+    about: How to run it on your NAS or console, and what others have done.

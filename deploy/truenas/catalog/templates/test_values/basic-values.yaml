@@ -1,0 +1,45 @@
+resources:
+  limits:
+    cpus: 2.0
+    memory: 2048
+
+TZ: Etc/UTC
+
+marquee:
+  api_key: ""
+  additional_envs: []
+
+network:
+  host_network: false
+  web_port:
+    bind_mode: published
+    port_number: 30585
+
+run_as:
+  user: 568
+  group: 568
+
+ix_volumes:
+  config: /opt/tests/mnt/marquee-config
+  downloads: /opt/tests/mnt/marquee-downloads
+  library: /opt/tests/mnt/marquee-library
+
+storage:
+  config:
+    type: ix_volume
+    ix_volume_config:
+      dataset_name: config
+      create_host_path: true
+  downloads:
+    mount_path: /downloads
+    type: ix_volume
+    ix_volume_config:
+      dataset_name: downloads
+      create_host_path: true
+  library:
+    mount_path: /library
+    type: ix_volume
+    ix_volume_config:
+      dataset_name: library
+      create_host_path: true
+  additional_storage: []

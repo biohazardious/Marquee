@@ -1,0 +1,57 @@
+name: Bug report
+description: Something Marquee did, or showed, that it should not have.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Please do not attach ROMs, CHDs or links to where
+        they can be downloaded; they are not needed to find a bug and cannot be kept here.
+  - type: input
+    id: version
+    attributes:
+      label: Version and build
+      description: The sidebar footer shows both, e.g. "Marquee 0.6.1 · master@2b3e6f8".
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it is installed
+      options:
+        - Docker / Docker Compose
+        - TrueNAS app
+        - Unraid template
+        - From source (pip / python -m marquee)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: library
+    attributes:
+      label: Where the library is
+      options:
+        - A local folder or mount
+        - SMB share (smb://)
+        - SFTP (sftp://)
+        - FTP (ftp://)
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: Download client
+      description: e.g. "qBittorrent 5.0.4 in its own container", or "none".
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+      description: Which page, which button, what it said.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The Activity page's log, or `docker logs marquee`. Mask anything private.
+      render: text

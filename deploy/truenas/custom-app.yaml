@@ -1,0 +1,27 @@
+# TrueNAS SCALE 24.10 or later: Apps -> Discover Apps -> (three dots) -> Install via YAML.
+# Change the three host paths under `volumes` to your own datasets first.
+#
+# - /config    a dataset for Marquee's settings and cache (about 100 MB per MAME release)
+# - /downloads the torrent folder: the same dataset your qBittorrent app writes to
+# - /library   the categorised library, if it lives on this NAS; leave it pointing at an
+#              empty dataset when the library is on a console reached over SMB/FTP/SFTP
+#
+# PUID/PGID 568 is TrueNAS's own "apps" user, the one its qBittorrent app runs as, so
+# both see the same files the same way. Only /config is ever chowned by Marquee.
+services:
+  marquee:
+    image: biohazardious/marquee:0.6
+    restart: unless-stopped
+    environment:
+      PUID: "568"
+      PGID: "568"
+      TZ: Etc/UTC
+      # Optional. Left empty, a key is generated on the first start; the app's log
+      # shows the URL with it.
+      MARQUEE_API_KEY: ""
+    ports:
+      - "30585:8585"
+    volumes:
+      - /mnt/tank/apps/marquee:/config
+      - /mnt/tank/torrents:/downloads
+      - /mnt/tank/roms/mame:/library

@@ -101,9 +101,10 @@ anywhere you need a categorised MAME set.
 
 ## Running it
 
-The image is on Docker Hub as `biohazardious/marquee` (amd64 and arm64), built by
-[the CI workflow](.github/workflows/ci.yml) from every push to `master` and every
-`v*` tag:
+The image is on Docker Hub as `biohazardious/marquee` and on the GitHub Container
+Registry as `ghcr.io/biohazardious/marquee` (amd64 and arm64, the same build and tags
+on both), built by [the CI workflow](.github/workflows/ci.yml) from every push to
+`master` and every `v*` tag:
 
 ```bash
 cp .env.example .env        # point CONFIG, DOWNLOADS and LIBRARY at your folders
@@ -123,6 +124,23 @@ docker run -d --name marquee -p 8585:8585 \
 
 Tags: `latest` follows `master`; a release `v0.4.0` is also `0.4.0` and `0.4`; every
 build carries its short commit as `sha-abc1234`.
+
+### On a NAS
+
+**TrueNAS SCALE** (24.10 or later): *Apps → Discover Apps → ⋮ → Install via YAML*, and
+paste [`deploy/truenas/custom-app.yaml`](deploy/truenas/custom-app.yaml) with its three
+host paths changed to your datasets. It runs as TrueNAS's own `apps` user (568), the
+one its qBittorrent app uses, so both see the torrent folder the same way. A catalog
+app for *Discover Apps* is in [`deploy/truenas/catalog`](deploy/truenas/catalog),
+tested with the catalog's own CI.
+
+**Unraid**: save [`deploy/unraid/marquee.xml`](deploy/unraid/marquee.xml) to
+`/boot/config/plugins/dockerMan/templates-user/my-marquee.xml`, then *Docker → Add
+Container → Template: Marquee*. The defaults follow Unraid's conventions (`appdata`,
+PUID 99, PGID 100).
+
+Anywhere else that runs containers -- Synology, QNAP, Portainer, a Raspberry Pi -- the
+compose file above is all it needs: one container, three folders, one port.
 
 Open the URL it prints. The key is stored in the browser after the first visit, so
 plain `http://localhost:8585/` works from then on; it also lives in `config/api_key`
@@ -396,7 +414,8 @@ Anything that fails is "downloading", not "on disk", and is never copied.
 
 - Fix broken ROMs or rebuild sets — use a ROM manager such as clrmamepro or RomVault
 - Scrape box art, videos or metadata — use Skraper or EmulationStation's own scraper
-- Host, seed or provide any content of its own
+- Include, host, seed or link to any ROM, CHD or BIOS file. It works with the sets you
+  already have, or that your own download client fetches
 - Handle Software List sets. They are indexed so you can see them, but the library is
   arcade only
 

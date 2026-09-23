@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Marquee</Name>
+  <Repository>biohazardious/marquee:0.6</Repository>
+  <Registry>https://hub.docker.com/r/biohazardious/marquee</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/biohazardious/Marquee/discussions</Support>
+  <Project>https://github.com/biohazardious/Marquee</Project>
+  <Overview>A MAME library manager in the shape of Sonarr. Pick the games you want, fetch only those through your own download client, and keep a categorised, verified library - with an EmulationStation gamelist - current across MAME releases. The library can be a share on this server or a console reached over SMB, FTP or SFTP.</Overview>
+  <Category>Tools: Other: MediaServer:Other</Category>
+  <WebUI>http://[IP]:[PORT:8585]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/biohazardious/Marquee/master/deploy/unraid/marquee.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/biohazardious/Marquee/master/docs/brand/icon-256.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <Config Name="Web UI" Target="8585" Default="8585" Mode="tcp" Description="Marquee's web interface." Type="Port" Display="always" Required="true" Mask="false">8585</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/marquee" Mode="rw" Description="Settings, the API key, and the cache of MAME XML and catlist files." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/marquee</Config>
+  <Config Name="Downloads" Target="/downloads" Default="/mnt/user/downloads" Mode="rw" Description="The torrent folder: the same files your download client writes to." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/downloads</Config>
+  <Config Name="Library" Target="/library" Default="/mnt/user/roms/mame" Mode="rw" Description="The categorised library, when it lives on this server. Unused when the library is on a console reached over SMB, FTP or SFTP." Type="Path" Display="always" Required="false" Mask="false">/mnt/user/roms/mame</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User the files belong to. Use the same one as your download client." Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group the files belong to." Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
+  <Config Name="API key" Target="MARQUEE_API_KEY" Default="" Mode="" Description="Optional. Left empty, one is generated on the first start and shown in the log with the URL to open." Type="Variable" Display="advanced" Required="false" Mask="true"/>
+</Container>

@@ -1,11 +1,13 @@
 # Test on every push and pull request; build the image and push it to Docker Hub
-# from master and from version tags.
+# and the GitHub Container Registry from master and from version tags.
 #
-# Two repository secrets are needed for the push:
+# Two repository secrets are needed for the Docker Hub push:
 #   DOCKERHUB_USERNAME  the Docker Hub account
 #   DOCKERHUB_TOKEN     an access token for it (Account settings -> Security)
 # and, optionally, a repository variable DOCKERHUB_IMAGE when the image should not
-# be called biohazardious/marquee.
+# be called biohazardious/marquee. The GHCR push needs nothing: the workflow's own
+# token may write packages. A new package starts private; make it public once, in
+# the package's settings on GitHub.
 
 name: CI
 
@@ -57,8 +59,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     env:
       IMAGE: ${{ vars.DOCKERHUB_IMAGE || 'biohazardious/marquee' }}
+      # Some catalogs (TrueNAS's among them) prefer an image on ghcr.io. The owner is
+      # already lowercase, which is what the registry requires.
+      GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/marquee
       PUSH: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
@@ -70,11 +76,21 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to the GitHub Container Registry
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Tags and labels
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE }}
+          # The same tags on both registries, from the one build.
+          images: |
+            ${{ env.IMAGE }}
+            ${{ env.GHCR_IMAGE }}
           # master -> latest; v0.4.0 -> 0.4.0, 0.4 and latest; every build -> the
           # short commit sha, so a running container can always be traced back.
           tags: |
