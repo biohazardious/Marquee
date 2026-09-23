@@ -8,9 +8,15 @@
 #
 # PUID/PGID 568 is TrueNAS's own "apps" user, the one its qBittorrent app runs as, so
 # both see the same files the same way. Only /config is ever chowned by Marquee.
+#
+# TrueNAS shows any app installed this way as "App Version: custom, Version 1.0.0";
+# the version that is actually running is at the bottom of Marquee's own sidebar.
 services:
   marquee:
     image: biohazardious/marquee:0.6
+    # Checked on every start, so restarting the app picks up the newest 0.6.x.
+    # Use a full version such as 0.6.1 instead to stay on one release.
+    pull_policy: always
     restart: unless-stopped
     environment:
       PUID: "568"
@@ -20,8 +26,37 @@ services:
       # shows the URL with it.
       MARQUEE_API_KEY: ""
     ports:
+      # host:container -- if you change the first number, change `port` under
+      # x-portals below to match, or the Web UI button opens the wrong port.
       - "30585:8585"
     volumes:
       - /mnt/tank/apps/marquee:/config
       - /mnt/tank/torrents:/downloads
       - /mnt/tank/roms/mame:/library
+    # Measured on a 10,000-game library: about 220 MB while planning and checking.
+    # Previewing a move to a newer release plans that one too, so leave room.
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+    # A transfer stops between files on SIGTERM; give it time to finish the one it
+    # is on rather than leave a partial copy for the next run to clean up.
+    stop_grace_period: 30s
+
+# The Web UI button on the app's page.
+x-portals:
+  - name: Web UI
+    scheme: http
+    host: 0.0.0.0
+    port: 30585
+    path: /
+
+x-notes: |
+  # Marquee
+
+  Unless MARQUEE_API_KEY is set, a key is generated on the first start: the first line
+  of the app's log is the URL to open, with the key in it. The browser keeps it after that.
+
+  Settings -> Library folder is /library for a folder on this NAS, or an smb://, ftp://
+  or sftp:// address for a console. The ROM and CHD folders are /downloads.
