@@ -5,16 +5,25 @@
    cost" deserves a page rather than a wall of names in a log. */
 
 import { icon } from './icons.js';
-import { $, append, clear, count, el, human, plural } from './util.js';
+import { $, append, clear, count, el, human, plural, sortControl } from './util.js';
 import { api, lock, post } from './api.js';
 
 let data = null;
 let expanded = false;
 
+/* The games and the genre table in one order, sorted by the server so "largest
+   first" orders all of them rather than the page that came back. */
+const sorter = sortControl('wanted', [
+  ['name', 'Name', 'asc'], ['size', 'Size', 'desc'], ['genre', 'Genre', 'asc'],
+  ['year', 'Year', 'asc'],
+], () => load(), ['size', 'desc']);
+
+const missingUrl = () => `/api/missing?${new URLSearchParams(sorter.get()).toString()}`;
+
 export async function load() {
   if (lock.on) return;
   try {
-    data = await api('/api/missing');
+    data = await api(missingUrl());
   } catch (error) {
     data = { error: error.message };
   }
@@ -25,7 +34,7 @@ export async function load() {
   if (data && !data.error && !(data.releases || []).length) {
     setTimeout(async () => {
       try {
-        const again = await api('/api/missing');
+        const again = await api(missingUrl());
         if ((again.releases || []).length) { data = again; render(); }
       } catch { /* the indexer is optional */ }
     }, 2500);
@@ -391,6 +400,7 @@ function listPanel() {
           ? `showing ${count(data.shown)} of ${count(data.total)}`
           : count(data.total) }),
       el('span', { class: 'spacer' }),
+      sorter.node,
       el('button', {
         class: 'btn sm', text: expanded ? 'Show fewer' : 'Show all',
         onclick: () => { expanded = !expanded; render(); },

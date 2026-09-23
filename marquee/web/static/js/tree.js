@@ -5,12 +5,30 @@
    also shared the same gaps: tick boxes that were a "button" reading ✓, rows a
    keyboard could not open, and focus thrown back to the top of the page by every
    redraw. Both are answered once, here. */
-import { count, el, human } from './util.js';
+import { count, el, human, ordered } from './util.js';
 
 export const INDENT = [10, 26, 42, 58];
 
 export const wantedOf = (cat) => cat.wanted ?? cat.machines ?? 0;
 export const weightOf = (cat) => cat.wanted_bytes ?? cat.bytes ?? 0;
+
+/* The page's Sort, applied to every level: categories by the weight each row shows,
+   genres by the weight of their categories, and games asked of the server in the
+   same order. */
+export function orderCats(cats, how) {
+  return ordered(cats, how, (cat) => cat.label || cat.name, weightOf);
+}
+
+export function orderGenres(names, cats, how) {
+  const weight = new Map();
+  for (const cat of cats) weight.set(cat.genre, (weight.get(cat.genre) || 0) + weightOf(cat));
+  return ordered(names, how, (name) => name, (name) => weight.get(name) || 0);
+}
+
+export const gameOrder = (how) => ({ sort: how.sort === 'size' ? 'size' : 'description',
+                                     dir: how.dir });
+
+export const TREE_SORTS = [['size', 'Size', 'desc'], ['name', 'Name', 'asc']];
 
 export function totals(cats) {
   return cats.reduce((sum, cat) => ({

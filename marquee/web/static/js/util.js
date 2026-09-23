@@ -85,6 +85,52 @@ export function ago(when) {
   return `${plural(Math.round(hours / 24), 'day', 'days')} ago`;
 }
 
+/* One way to order a list, the same on every page: a choice of key and a direction
+   button. `options` is [[value, label, defaultDir]]; picking a key takes its natural
+   direction (sizes largest first, names A to Z), the arrow turns it round. Remembered
+   per page, and `set` lets a table header move it without a second source of truth. */
+export function sortControl(page, options, onChange, fallback) {
+  const saved = stored(`marquee.sort.${page}`, '');
+  const [savedKey, savedDir] = saved.split(':');
+  const start = options.find(([value]) => value === savedKey) ? savedKey : fallback[0];
+  const current = { sort: start, dir: savedKey === start && savedDir ? savedDir : fallback[1] };
+  const select = el('select', { 'aria-label': 'Sort by' },
+    options.map(([value, label]) => el('option', { value, text: label,
+                                                   selected: value === current.sort })));
+  const arrow = el('button', { class: 'btn sm ghost sortdir', type: 'button' });
+  const paint = () => {
+    arrow.textContent = current.dir === 'desc' ? '↓' : '↑';
+    arrow.title = current.dir === 'desc' ? 'Descending — click for ascending'
+      : 'Ascending — click for descending';
+    arrow.setAttribute('aria-label', arrow.title);
+    select.value = current.sort;
+    store(`marquee.sort.${page}`, `${current.sort}:${current.dir}`);
+  };
+  const changed = () => { paint(); onChange({ ...current }); };
+  select.onchange = () => {
+    current.sort = select.value;
+    current.dir = (options.find(([value]) => value === current.sort) || [])[2] || 'asc';
+    changed();
+  };
+  arrow.onclick = () => { current.dir = current.dir === 'desc' ? 'asc' : 'desc'; changed(); };
+  paint();
+  const node = el('span', { class: 'sortctl' },
+    el('label', { class: 'pick' }, el('span', { text: 'Sort' }), select), arrow);
+  const moveTo = (sort, dir) => { current.sort = sort; current.dir = dir; paint(); };
+  return { node, get: () => ({ ...current }), set: moveTo };
+}
+
+/* Order entries by name or by weight, the way sortControl says. The direction turns
+   the chosen key round, never the tie-break: equal sizes -- every left-out game
+   before the release is priced -- still read A to Z, not Z to A. */
+export function ordered(list, how, label, weight) {
+  const sign = how.dir === 'desc' ? -1 : 1;
+  const byName = (a, b) => String(label(a)).localeCompare(String(label(b)), undefined, { sensitivity: 'base' });
+  return [...(list || [])].sort(how.sort === 'size'
+    ? (a, b) => sign * (weight(a) - weight(b)) || byName(a, b)
+    : (a, b) => sign * byName(a, b));
+}
+
 export function debounce(fn, wait = 220) {
   let timer;
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), wait); };

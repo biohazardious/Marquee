@@ -2,7 +2,7 @@
    with a detail panel behind each one. */
 
 import { icon } from './icons.js';
-import { $, append, badges, banner, clear, count, debounce, el, hero, human, plural, pressable, shot, store, stored, subtitle } from './util.js';
+import { $, append, badges, banner, clear, count, debounce, el, hero, human, plural, pressable, shot, sortControl, store, stored, subtitle } from './util.js';
 import { api, lock, machine as fetchMachine, machines as fetchMachines, post, state } from './api.js';
 
 const V = {
@@ -132,10 +132,21 @@ function table() {
 function sortBy(key) {
   const column = key === 'size' ? 'size' : key;
   if (V.sort === column) V.dir = V.dir === 'desc' ? 'asc' : 'desc';
-  else { V.sort = column; V.dir = column === 'description' || column === 'manufacturer' ? 'asc' : 'desc'; }
+  else { V.sort = column; V.dir = column === 'size' ? 'desc' : 'asc'; }
+  // The header and the Sort control are one setting, whichever was used.
+  sorter.set(V.sort, V.dir);
   V.offset = 0;
   load();
 }
+
+/* Posters and table alike. The table's headers move the same setting. */
+const sorter = sortControl('library', [
+  ['description', 'Name', 'asc'], ['size', 'Size', 'desc'], ['genre', 'Genre', 'asc'],
+  ['year', 'Year', 'asc'], ['manufacturer', 'Manufacturer', 'asc'],
+  ['category', 'Category', 'asc'],
+], (how) => { V.sort = how.sort; V.dir = how.dir; V.offset = 0; load(); },
+['description', 'asc']);
+({ sort: V.sort, dir: V.dir } = sorter.get());
 
 function pager() {
   const from = V.total ? V.offset + 1 : 0;
@@ -458,7 +469,7 @@ export function toolbar() {
   views.children[1].prepend(icon('menu'));
 
   return { search, genres, statuses, adult, have, condition, state: checkResult,
-    console: consoleFit,
+    console: consoleFit, sort: sorter.node,
     art, getArt, get,
            views };
 }

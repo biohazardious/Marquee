@@ -29,9 +29,11 @@ def machine_status(plan):
         return {}
     # Memoised on the plan: the library search asks on every keystroke, and walking
     # fifty thousand actions each time is work that gives the same answer.
-    key = (id(plan.sync), len(plan.sync.actions), plan.sync.to_transfer)
+    # The report itself, not id(): CPython reuses the address of a freed report, and
+    # a re-diff on the same plan could land on it with the same counts.
+    key = (plan.sync, len(plan.sync.actions), plan.sync.to_transfer)
     cached = getattr(plan, "_status_cache", None)
-    if cached and cached[0] == key:
+    if cached and cached[0][0] is key[0] and cached[0][1:] == key[1:]:
         return cached[1]
     found = {}
     for action in plan.sync.actions:
@@ -184,9 +186,13 @@ def machine_rows(plan, query="", status="", genre="", category="", offset=0, lim
     keys = {"size": weigh,
             "name": lambda item: item.name,
             "description": lambda item: item.description.lower(),
+            "genre": lambda item: ((item.genre or "").lower(), item.description.lower()),
             "category": lambda item: item.category,
             "year": lambda item: item.year or "",
             "manufacturer": lambda item: (item.manufacturer or "").lower()}
+    # The tie-break first and always A to Z, then the chosen key in its direction:
+    # a single reversed sort put equal sizes Z to A too.
+    kept.sort(key=lambda item: (item.description.lower(), item.name))
     kept.sort(key=keys.get(sort, keys["size"]), reverse=descending)
 
     # Clamped, not trusted: a negative offset is a Python slice from the end, so
@@ -479,8 +485,36 @@ def _fetch_rows(plan, needle, sizes, needed=None):
     return rows
 
 
+def sort_rows(rows, sort="size", descending=True):
+    """Order page rows -- a game or a file each -- the way the page's Sort asks.
+
+    Ties fall back to the title, so a page of equal sizes still reads in order.
+    """
+    title = lambda row: (row.get("description") or row.get("name") or "").lower()  # noqa: E731
+    keys = {"name": lambda row: title(row),
+            "size": lambda row: row.get("bytes") or 0,
+            "genre": lambda row: (row.get("genre") or "").lower(),
+            "year": lambda row: row.get("year") or ""}
+    # Two stable passes: the tie-break first, always A to Z, then the chosen key in
+    # the chosen direction. One reversed sort turned equal sizes Z to A as well.
+    rows.sort(key=lambda row: (title(row), row.get("name") or ""))
+    rows.sort(key=keys.get(sort, keys["size"]), reverse=descending)
+    return rows
+
+
+def branch_order(branches, sort="size", descending=True):
+    """Genres or categories by weight, or by name for every other order. Equal
+    weights stay A to Z whichever way the weight runs."""
+    out = sorted(branches, key=lambda branch: branch["name"].lower())
+    if sort == "size":
+        out.sort(key=lambda branch: branch["bytes"], reverse=descending)
+    elif descending:
+        out.reverse()
+    return out
+
+
 def changes_payload(plan, kind="", query="", offset=0, limit=ROW_LIMIT, sizes=None,
-                    version="", category="", group=False):
+                    version="", category="", group=False, sort="size", descending=True):
     """What the next Transfer will actually do, file by file and game by game.
 
     Everything needed to answer this has been worked out since the first version --
@@ -551,12 +585,11 @@ def changes_payload(plan, kind="", query="", offset=0, limit=ROW_LIMIT, sizes=No
     chosen = kind if any(entry["kind"] == kind for entry in kinds) else ""
     rows = []
     if chosen == FETCH:
-        rows = _fetch_rows(plan, query.strip().lower(), sizes, needed_set)
-        rows.sort(key=lambda row: (-row["bytes"], row["name"]))
+        rows = sort_rows(_fetch_rows(plan, query.strip().lower(), sizes, needed_set),
+                         sort, descending)
     elif chosen:
-        rows = _change_rows(plan, report, chosen, query.strip().lower(),
-                            index, wanted, version)
-        rows.sort(key=lambda row: (-row["bytes"], row["name"]))
+        rows = sort_rows(_change_rows(plan, report, chosen, query.strip().lower(),
+                                      index, wanted, version), sort, descending)
     # Every row can be placed in the same tree the Selection page shows: a game by
     # its genre and category, an orphan by the folder it sits in -- which is the
     # library's own genre/category layout, so the two agree.
@@ -575,14 +608,14 @@ def changes_payload(plan, kind="", query="", offset=0, limit=ROW_LIMIT, sizes=No
     offset = max(0, offset)
     payload["offset"] = offset
     if group:
-        payload["tree"] = _change_tree(rows)
+        payload["tree"] = _change_tree(rows, sort, descending)
         payload["rows"] = []
     else:
         payload["rows"] = rows[offset:offset + max(1, min(limit, ROW_LIMIT))]
     return payload
 
 
-def _change_tree(rows):
+def _change_tree(rows, sort="size", descending=True):
     """genre -> category totals for one kind, in the Selection page's shape.
 
     A flat list of 1,144 games says what a run does; the same games under Shooter /
@@ -611,9 +644,9 @@ def _change_tree(rows):
             bucket["moved"] = bucket.get("moved", 0) + (1 if row.get("from") else 0)
     total = sum(g["bytes"] for g in genres.values()) or 1
     out = []
-    for genre in sorted(genres.values(), key=lambda g: (-g["bytes"], g["name"])):
-        genre["categories"] = sorted(genre["categories"].values(),
-                                     key=lambda c: (-c["bytes"], c["name"]))
+    # Branches the way the rows are: by weight, or by name for every other order.
+    for genre in branch_order(genres.values(), sort, descending):
+        genre["categories"] = branch_order(genre["categories"].values(), sort, descending)
         for leaf in genre["categories"]:
             leaf["bytes_human"] = human_bytes(leaf["bytes"])
         genre["bytes_human"] = human_bytes(genre["bytes"])
@@ -787,7 +820,8 @@ def _wanted_detail(plan, name, sizes):
     return None
 
 
-def missing_rows(plan, records=None, limit=400, priced=False):
+def missing_rows(plan, records=None, limit=400, priced=False, sort="name",
+                 descending=False):
     """The machines the selection wants that are not on disk, as something actionable.
 
     `plan.missing_roms` is just names; on a partial set that is a wall of 1,500 words
@@ -806,6 +840,8 @@ def missing_rows(plan, records=None, limit=400, priced=False):
     rows = []
     total_bytes = 0
 
+    # Every row is built and ordered before the page is cut, or "largest first" would
+    # only order the 400 that came first by name.
     for name in sorted(wanted):
         item = described.get(name)
         size = sizes.get(name) or 0
@@ -814,19 +850,20 @@ def missing_rows(plan, records=None, limit=400, priced=False):
         entry = genres.setdefault(genre, {"name": genre, "machines": 0, "bytes": 0})
         entry["machines"] += 1
         entry["bytes"] += size
-        if len(rows) < limit:
-            rows.append({"name": name,
-                         "description": (item.description if item else "") or name,
-                         "genre": genre,
-                         "category": (item.category if item else "") or "",
-                         "bytes": size,
-                         "bytes_human": human_bytes(size) if size else "",
-                         # Which half is wanted: the zip, the disks, or both.
-                         "zip": bool(item.rom_to_fetch) if item else True,
-                         "disks": list(item.disks_to_fetch) if item else []})
+        rows.append({"name": name,
+                     "year": (item.year if item else "") or "",
+                     "description": (item.description if item else "") or name,
+                     "genre": genre,
+                     "category": (item.category if item else "") or "",
+                     "bytes": size,
+                     "bytes_human": human_bytes(size) if size else "",
+                     # Which half is wanted: the zip, the disks, or both.
+                     "zip": bool(item.rom_to_fetch) if item else True,
+                     "disks": list(item.disks_to_fetch) if item else []})
 
     for entry in genres.values():
         entry["bytes_human"] = human_bytes(entry["bytes"])
+    rows = sort_rows(rows, sort, descending)[:limit]
 
     return {
         "total": len(wanted),
@@ -837,7 +874,7 @@ def missing_rows(plan, records=None, limit=400, priced=False):
         "bytes": total_bytes,
         "bytes_human": human_bytes(total_bytes),
         "disks": plan.disks_to_fetch,
-        "genres": sorted(genres.values(), key=lambda entry: -entry["bytes"]),
+        "genres": branch_order(genres.values(), sort, descending),
         "rows": rows,
     }
 

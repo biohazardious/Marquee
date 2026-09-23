@@ -753,6 +753,7 @@ async function boot() {
   bar.getArt.id = 'libGetArt';
   $('libViews').replaceWith(bar.views);
   bar.views.id = 'libViews';
+  $('libSort').replaceWith(bar.sort);
 
   $('planBtn').onclick = buildPlan;
   $('copyBtn').onclick = showChanges;
@@ -803,6 +804,7 @@ async function boot() {
   selBar.condition.id = 'selCondition';
   $('selAdult').replaceWith(selBar.adult);
   selBar.adult.id = 'selAdult';
+  $('selSort').replaceWith(selBar.sort);
   // Every filter says what it filters. Eight bare menus reading "Any", "Everything"
   // and "Title screens" in a row left the reader to guess which was which.
   for (const [id, caption] of [

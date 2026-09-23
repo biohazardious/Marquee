@@ -284,7 +284,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(self.app.art_payload())
                 return
             if parsed.path == "/api/missing":
-                self._send_json(self.app.missing_payload())
+                one = lambda key, fallback="": (query.get(key) or [fallback])[0]  # noqa: E731
+                self._send_json(self.app.missing_payload(
+                    sort=one("sort", "name"), descending=one("dir", "asc") == "desc"))
                 return
             if parsed.path == "/api/releases":
                 self._send_json(self.app.releases_payload())
@@ -303,7 +305,8 @@ class Handler(BaseHTTPRequestHandler):
                     limit=self._number(one("limit", "500"), 500),
                     sizes=self.app.release_sizes(),
                     version=getattr(self.app.job.resolution, "xml_version", "") or "",
-                    category=one("category"), group=one("group") == "1"))
+                    category=one("category"), group=one("group") == "1",
+                    sort=one("sort", "size"), descending=one("dir", "desc") == "desc"))
                 return
             if parsed.path == "/api/left-out":
                 self._send_json(left_out_payload(

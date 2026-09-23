@@ -659,3 +659,7 @@ ul.health li.off .ico { color: var(--dim); }
 .fetch-gap { margin-top: 12px; padding: 10px 12px; border-radius: 6px;
   background: color-mix(in srgb, var(--warn) 7%, var(--panel)); border: 1px solid color-mix(in srgb, var(--warn) 25%, var(--line)); }
 .fetch-gap b { color: var(--warn); }
+
+/* Sort: a captioned choice and a direction arrow, on every list page. */
+.sortctl { display: inline-flex; align-items: center; gap: 6px; }
+.sortctl .sortdir { min-width: 34px; justify-content: center; font-size: 15px; }

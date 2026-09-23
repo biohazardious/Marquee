@@ -7,7 +7,7 @@
    deleted and what they were. */
 
 import { icon } from './icons.js';
-import { $, append, clear, count, el, human, plural, pressable, store, stored } from './util.js';
+import { $, append, clear, count, el, human, plural, pressable, sortControl, store, stored } from './util.js';
 import { api, lock, post, state } from './api.js';
 
 const V = {
@@ -24,6 +24,12 @@ const V = {
   // changes what would be deleted asks again.
   armed: false,
 };
+
+/* Rows and, in the "By genre" view, the branches, ordered by the server so a page
+   of 200 is the first 200 of the whole kind in that order. */
+const sorter = sortControl('changes', [
+  ['size', 'Size', 'desc'], ['name', 'Name', 'asc'], ['genre', 'Genre', 'asc'],
+], () => { V.offset = 0; load(); }, ['size', 'desc']);
 
 /* Their own colours, the same ones the library's status badges use. */
 const TONE = {
@@ -42,7 +48,7 @@ export async function load(kind) {
   try {
     V.data = await api('/api/changes?' + new URLSearchParams({
       kind: V.kind, q: V.query, offset: V.offset, limit: 200,
-      group: V.view === 'tree' ? '1' : '0',
+      group: V.view === 'tree' ? '1' : '0', ...sorter.get(),
     }).toString());
     V.error = '';
     V.branches = {};
@@ -67,7 +73,7 @@ async function loadBranch(category) {
   V.loading.add(key);
   try {
     const found = await api('/api/changes?' + new URLSearchParams({
-      kind: V.kind, q: V.query, category, limit: 500,
+      kind: V.kind, q: V.query, category, limit: 500, ...sorter.get(),
     }).toString());
     V.branches[key] = found.rows;
   } catch (error) {
@@ -385,6 +391,7 @@ function rowsPanel(data) {
           + `${data.bytes_shown_human}` }),
       el('span', { class: 'spacer' }),
       el('span', { class: 'search' }, icon('search'), search),
+      sorter.node,
       views,
       el('button', { class: 'btn sm', text: 'Close', onclick: () => pick(data.kind) })),
     el('div', { class: 'body tight' }, body, tree ? null : pager(data),

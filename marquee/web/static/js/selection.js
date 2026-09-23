@@ -6,8 +6,9 @@
    by tests/test_selection_logic.py under node. */
 
 import { icon } from './icons.js';
-import { $, append, badges, banner, clear, count, el, plural } from './util.js';
-import { INDENT, branchRow, keepingFocus, tickBox, wantedOf, weightOf } from './tree.js';
+import { $, append, badges, banner, clear, count, el, plural, sortControl } from './util.js';
+import { INDENT, TREE_SORTS, branchRow, gameOrder, keepingFocus, orderCats, orderGenres,
+  tickBox, wantedOf, weightOf } from './tree.js';
 import { api, machines as fetchMachines } from './api.js';
 import { open as openGame } from './library.js';
 
@@ -20,6 +21,7 @@ export const S = {
   outGenres: new Set(), outCats: new Set(), outRoms: new Set(),
   open: new Set(), openCats: new Set(), loading: new Set(),
   hits: null, hitTotal: 0, busy: false,
+  sort: { sort: 'size', dir: 'desc' },
   // The same filters the library has. A tree organised by genre is the right shape
   // for browsing and the wrong one for "drop every imperfect shooter", so when any of
   // these is set the page switches to a flat list of what matched.
@@ -264,11 +266,15 @@ async function loadCategory(name) {
   render();
   try {
     const [found] = await Promise.all([
-      fetchMachines({ category: name, limit: ROWS, sort: 'size', dir: 'desc', excluded: '1' }),
+      fetchMachines({ category: name, limit: ROWS, ...gameOrder(S.sort), excluded: '1' }),
       ready(),
     ]);
     S.machines[name] = found.rows;
     found.rows.forEach(remember);
+  } catch (error) {
+    // Kept as empty, so the redraw does not ask again as fast as the server fails.
+    S.machines[name] = [];
+    banner(`Could not read ${name}: ${error.message}`, 'bad');
   } finally {
     S.loading.delete(name);
     render();
@@ -318,7 +324,7 @@ export async function setFilter(key, value) {
   S.busy = true;
   render();
   try {
-    const found = await fetchMachines({ ...params(), limit: ROWS, sort: 'size', dir: 'desc', excluded: '1' });
+    const found = await fetchMachines({ ...params(), limit: ROWS, ...gameOrder(S.sort), excluded: '1' });
     if (mine !== generation) return;
     S.hits = found.rows;
     S.hitTotal = found.total;
@@ -405,6 +411,7 @@ function categoryRows(cat, depth) {
     rows.push(el('div', { class: 'row game dim', text: 'loading…' }));
     return rows;
   }
+  if (!S.machines[cat.name]) loadCategory(cat.name);
   const games = S.machines[cat.name] || [];
   games.forEach((m) => rows.push(gameRow(m, false, depth + 1)));
   // The tick box still covers all of them -- membership is loaded in full -- but the
@@ -421,7 +428,7 @@ function categoryRows(cat, depth) {
 }
 
 function groupRows(group, depth, label) {
-  const cats = catsOf(group);
+  const cats = orderCats(catsOf(group), S.sort);
   if (!cats.length) return [];
   const key = `${group.mature ? '18+' : ''}${group.genre}`;
   const open = S.open.has(key);
@@ -436,8 +443,9 @@ function groupRows(group, depth, label) {
 
 function treeNodes() {
   const nodes = [];
-  for (const genre of S.genres) {
-    const rows = groupRows({ genre: genre.name, mature: false }, 0);
+  const names = S.genres.map((genre) => genre.name);
+  for (const name of orderGenres(names, S.cats.filter((cat) => !cat.mature), S.sort)) {
+    const rows = groupRows({ genre: name, mature: false }, 0);
     if (rows.length) nodes.push(rows);
   }
 
@@ -454,7 +462,7 @@ function treeNodes() {
     onTick: () => tickSide(true), open, onOpen: swap, cats: adult, id: 'adult',
   })];
   if (open) {
-    S.genres.map((genre) => genre.name)
+    orderGenres(names, adult, S.sort)
       .filter((name) => adult.some((cat) => cat.genre === name))
       .forEach((name) => rows.push(...groupRows({ genre: name, mature: true }, 1)));
   }
@@ -674,7 +682,17 @@ export function toolbar() {
     return node;
   };
 
+  // Every level of the tree, and the games when a category opens: asked again in
+  // the new order, since a capped list sorted here would only reorder its first 500.
+  const sorter = sortControl('selection', TREE_SORTS, (how) => {
+    S.sort = how;
+    S.machines = {};
+    if (filtering()) setFilter('query', S.filters.query);
+    render();
+  }, ['size', 'desc']);
+  S.sort = sorter.get();
   return {
+    sort: sorter.node,
     search: el('input', {
       type: 'text', placeholder: 'Find a game…', value: S.filters.query,
     }),

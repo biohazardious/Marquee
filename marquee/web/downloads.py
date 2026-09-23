@@ -377,7 +377,7 @@ class DownloadsMixin:
         self._torrent_sizes.update(at=time.time(), data=sizes)
         return sizes
 
-    def missing_payload(self):
+    def missing_payload(self, sort="name", descending=False):
         plan = self.job.plan
         if plan is None:
             return {"total": 0, "bytes": 0, "genres": [], "rows": []}
@@ -385,7 +385,8 @@ class DownloadsMixin:
         # machine in the release rather than only the ones a torrent in the client
         # happens to cover.
         sizes = self.release_sizes() or self.torrent_sizes()
-        payload = missing_rows(plan, sizes, priced=bool(sizes))
+        payload = missing_rows(plan, sizes, priced=bool(sizes), sort=sort,
+                               descending=descending)
         payload["releases"] = self.releases.get("data")
         # Three different answers, and they need different words: no client at all,
         # a client that does not hold the release, or a real figure.

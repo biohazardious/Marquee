@@ -8,8 +8,9 @@
    search and no tree. */
 
 import { icon } from './icons.js';
-import { $, append, badges, clear, count, debounce, el, plural } from './util.js';
-import { INDENT, branchRow, keepingFocus } from './tree.js';
+import { $, append, badges, clear, count, debounce, el, plural, sortControl } from './util.js';
+import { INDENT, TREE_SORTS, branchRow, gameOrder, keepingFocus, orderCats,
+  orderGenres } from './tree.js';
 import { api, machines as fetchMachines, post, refresh } from './api.js';
 import { open as openGame } from './library.js';
 
@@ -31,6 +32,7 @@ const V = {
   reason: '', query: '', condition: '', total: 0, everything: 0, bytesHuman: '',
   imperfectExclusions: 0,
   adultFolder: 'ZZ-Adult', loaded: false,
+  sort: { sort: 'size', dir: 'desc' },
 };
 
 export function adopt(config) {
@@ -136,7 +138,7 @@ async function loadCategory(name) {
   try {
     const found = await fetchMachines({
       set: 'left-out', category: name, reason: V.reason, q: V.query,
-      condition: V.condition, limit: ROWS, sort: 'size', dir: 'desc',
+      condition: V.condition, limit: ROWS, ...gameOrder(V.sort),
     });
     rows[name] = found.rows;
   } catch (error) {
@@ -195,7 +197,7 @@ function categoryRows(cat, depth) {
 }
 
 function groupRows(genre, mature, depth) {
-  const cats = catsOf(genre, mature);
+  const cats = orderCats(catsOf(genre, mature), V.sort);
   if (!cats.length) return [];
   const key = `${mature ? '18+' : ''}${genre}`;
   const open = V.open.has(key);
@@ -210,8 +212,9 @@ function groupRows(genre, mature, depth) {
    folder holding the same genres and categories underneath it. */
 function treeNodes() {
   const nodes = [];
-  for (const genre of V.genres) {
-    const rows = groupRows(genre.name, false, 0);
+  const names = V.genres.map((genre) => genre.name);
+  for (const name of orderGenres(names, V.cats.filter((cat) => !cat.mature), V.sort)) {
+    const rows = groupRows(name, false, 0);
     if (rows.length) nodes.push(rows);
   }
   const adult = V.cats.filter((cat) => cat.mature);
@@ -226,7 +229,7 @@ function treeNodes() {
     depth: 0, label: V.adultFolder, open, onOpen: swap, cats: adult, id: 'adult',
   })];
   if (open) {
-    V.genres.map((genre) => genre.name)
+    orderGenres(names, adult, V.sort)
       .filter((name) => adult.some((cat) => cat.genre === name))
       .forEach((name) => rows.push(...groupRows(name, true, 1)));
   }
@@ -269,12 +272,19 @@ function controls() {
   BAR.count = el('b');
   BAR.bytes = el('span', { class: 'muted' });
   BAR.action = el('span');
+  // The whole tree, and each category's games asked again in the new order.
+  const sorter = sortControl('leftout', TREE_SORTS, (how) => {
+    V.sort = how;
+    V.rows = {};
+    render();
+  }, ['size', 'desc']);
+  V.sort = sorter.get();
 
   BAR.root = el('div', { class: 'rowflex libsum' },
     BAR.count, BAR.bytes,
     el('span', { style: 'flex:1' }),
     el('span', { class: 'search' }, icon('search'), BAR.search),
-    BAR.condition, BAR.reason, BAR.action);
+    BAR.condition, BAR.reason, sorter.node, BAR.action);
   return BAR.root;
 }
 
