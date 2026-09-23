@@ -163,9 +163,21 @@ def filtered(plan, query="", status="", genre="", category="", mature="", have="
     return kept
 
 
+# What the Library can be grouped by, and what a machine without one is called.
+GROUPS = {"genre": (lambda item: item.genre, "Unlisted"),
+          "category": (lambda item: item.category, "Unlisted"),
+          "year": (lambda item: item.year, "Unknown year"),
+          "manufacturer": (lambda item: item.manufacturer, "Unknown manufacturer")}
+
+
+def group_of(item, group):
+    label, missing = GROUPS[group]
+    return (label(item) or "").strip() or missing
+
+
 def machine_rows(plan, query="", status="", genre="", category="", offset=0, limit=200,
                  sort="size", descending=True, with_excluded=False, mature="", have="",
-                 condition="", reason="", state="", sizes=None, console=""):
+                 condition="", reason="", state="", sizes=None, console="", group=""):
     """A filtered, sorted page of the plan's machines.
 
     `with_excluded` lists the machines the exclude list leaves out as well, marked.
@@ -194,6 +206,11 @@ def machine_rows(plan, query="", status="", genre="", category="", offset=0, lim
     # a single reversed sort put equal sizes Z to A too.
     kept.sort(key=lambda item: (item.description.lower(), item.name))
     kept.sort(key=keys.get(sort, keys["size"]), reverse=descending)
+    grouping = group if group in GROUPS else ""
+    if grouping:
+        # Groups A to Z (years oldest first), each in the order just chosen: the sort
+        # is stable, so what was sorted above survives inside every group.
+        kept.sort(key=lambda item: group_of(item, grouping).lower())
 
     # Clamped, not trusted: a negative offset is a Python slice from the end, so
     # `?offset=-5` quietly answered with the last five rows and called them page one.
@@ -207,8 +224,33 @@ def machine_rows(plan, query="", status="", genre="", category="", offset=0, lim
                                     else sizes.get(item.name, 0)))
         else:
             rows.append(machine_row(item, MISSING, size=sizes.get(item.name, 0)))
-    return {"total": len(kept), "offset": offset,
-            "bytes": weigh_together(kept, sizes, held_sizes(plan)), "rows": rows}
+    held = held_sizes(plan)
+    payload = {"total": len(kept), "offset": offset,
+               "bytes": weigh_together(kept, sizes, held), "rows": rows}
+    if grouping:
+        payload["group"] = grouping
+        payload["groups"] = _group_totals(kept, page, offset, grouping, sizes, held)
+        for row, item in zip(rows, page):
+            row["group"] = group_of(item, grouping)
+    return payload
+
+
+def _group_totals(kept, page, offset, grouping, sizes, held):
+    """The whole of each group a page shows -- not the slice of it on this page -- and
+    whether it began on an earlier one, so its heading can say it continues."""
+    shown = {group_of(item, grouping) for item in page}
+    members, first = {}, {}
+    for index, item in enumerate(kept):
+        label = group_of(item, grouping)
+        if label in shown:
+            members.setdefault(label, []).append(item)
+            first.setdefault(label, index)
+    out = {}
+    for label, items in members.items():
+        weight = weigh_together(items, sizes, held)
+        out[label] = {"count": len(items), "bytes": weight,
+                      "bytes_human": human_bytes(weight), "continued": first[label] < offset}
+    return out
 
 
 def left_out_payload(plan, sizes=None, reason="", query="", condition=""):

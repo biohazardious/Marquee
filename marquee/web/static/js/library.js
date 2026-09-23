@@ -10,6 +10,9 @@ const V = {
   art: stored('marquee.art', 'Named_Titles'),
   query: '', genre: '', status: '', category: '', mature: '', have: '', condition: '',
   state: '', console: '',
+  // Section headings through the list: the genre, category, year or maker each game
+  // is under. Remembered, like the order.
+  group: stored('marquee.libgroup', ''), groups: {},
   sort: 'description', dir: 'asc',
   offset: 0, limit: 60, total: 0, bytes: 0, rows: [], loading: false,
 };
@@ -40,9 +43,10 @@ export async function load() {
     const found = await fetchMachines({
       q: V.query, genre: V.genre, status: V.status, mature: V.mature, have: V.have,
       condition: V.condition, state: V.state, console: V.console,
-      sort: V.sort, dir: V.dir, offset: V.offset, limit: V.limit,
+      sort: V.sort, dir: V.dir, offset: V.offset, limit: V.limit, group: V.group,
     });
     if (mine !== generation) return;
+    V.groups = found.groups || {};
     V.rows = found.rows;
     V.total = found.total;
     V.bytes = found.bytes || 0;
@@ -113,7 +117,7 @@ function table() {
     return column.sortable ? pressable(cell, () => sortBy(column.key)) : cell;
   }));
 
-  const body = V.rows.map((m) => pressable(el('tr', { class: m.here ? '' : 'absent', onclick: () => open(m.name) },
+  const body = withHeadings((m) => pressable(el('tr', { class: m.here ? '' : 'absent', onclick: () => open(m.name) },
     el('td', { class: 'title-cell' },
       el('b', { text: m.description }),
       el('small', { text: m.name })),
@@ -122,7 +126,9 @@ function table() {
     el('td', { class: 'muted', text: m.category }),
     el('td', { class: 'num dim', text: m.players || '-' }),
     el('td', { class: 'rowflex' }, badges(m)),
-    el('td', { class: 'num nowrap', text: m.bytes ? m.bytes_human : '—' })), () => open(m.name)));
+    el('td', { class: 'num nowrap', text: m.bytes ? m.bytes_human : '—' })), () => open(m.name)),
+  (label) => el('tr', { class: 'grouphead' },
+    el('td', { colspan: String(COLUMNS.length) }, headingText(label))));
 
   return el('table', { class: 'grid' },
     el('thead', {}, head),
@@ -218,7 +224,7 @@ export function render() {
 
   host.append(summary());
   host.append(V.view === 'posters'
-    ? el('div', { class: 'posters', style: 'padding:18px' }, V.rows.map(poster))
+    ? el('div', { class: 'posters', style: 'padding:18px' }, withHeadings(poster, posterHeading))
     : el('div', { style: 'overflow-x:auto' }, table()));
   host.append(pager());
 }
@@ -468,15 +474,66 @@ export function toolbar() {
   views.children[0].prepend(icon('overview'));
   views.children[1].prepend(icon('menu'));
 
+  /* Headings through the list, under the Sort: grouping orders the groups, the Sort
+     orders the games inside each. */
+  const grouping = el('select', {
+    'aria-label': 'Group by',
+    onchange: (event) => {
+      V.group = event.target.value;
+      store('marquee.libgroup', V.group);
+      V.offset = 0;
+      load();
+    },
+  }, [['', 'None'], ['genre', 'Genre'], ['category', 'Category'], ['year', 'Year'],
+    ['manufacturer', 'Manufacturer']].map(([value, label]) => el('option', {
+    value, text: label, selected: V.group === value })));
+  const groupBy = el('label', { class: 'pick' }, el('span', { text: 'Group' }), grouping);
+
   return { search, genres, statuses, adult, have, condition, state: checkResult,
-    console: consoleFit, sort: sorter.node,
+    console: consoleFit, sort: sorter.node, group: groupBy,
     art, getArt, get,
            views };
+}
+
+/* The page's rows with a heading wherever the group changes. The figures are the
+   whole group's, not this page's slice of it; a group begun on an earlier page says
+   so rather than looking like it starts here. */
+function withHeadings(draw, heading) {
+  if (!V.group) return V.rows.map(draw);
+  const out = [];
+  let current = null;
+  for (const m of V.rows) {
+    if (m.group !== current) {
+      current = m.group;
+      out.push(heading(current));
+    }
+    out.push(draw(m));
+  }
+  return out;
+}
+
+function headingText(label) {
+  const totals = V.groups[label] || {};
+  return [el('b', { text: label }),
+    totals.continued ? el('span', { class: 'dim', text: ' (continued)' }) : null,
+    el('span', { class: 'muted', text: ` · ${plural(totals.count || 0, 'game', 'games')}`
+      + (totals.bytes ? ` · ${totals.bytes_human}` : '') })];
+}
+
+function posterHeading(label) {
+  return el('div', { class: 'grouphead' }, headingText(label));
 }
 
 function setView(view) {
   V.view = view;
   store('marquee.view', view);
+  // The toggle is built once; it has to follow the choice, or Table showed with
+  // Posters still lit.
+  const buttons = $('libViews')?.children || [];
+  if (buttons.length === 2) {
+    buttons[0].classList.toggle('on', view === 'posters');
+    buttons[1].classList.toggle('on', view === 'table');
+  }
   V.offset = 0;
   load();
 }

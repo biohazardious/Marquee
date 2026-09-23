@@ -663,3 +663,11 @@ ul.health li.off .ico { color: var(--dim); }
 /* Sort: a captioned choice and a direction arrow, on every list page. */
 .sortctl { display: inline-flex; align-items: center; gap: 6px; }
 .sortctl .sortdir { min-width: 34px; justify-content: center; font-size: 15px; }
+
+/* A section heading in the Library: across the whole poster grid, or a table row. */
+.posters .grouphead { grid-column: 1 / -1; padding: 10px 2px 2px; border-bottom: 1px solid var(--line);
+  font-size: 14px; }
+.posters .grouphead:first-child { padding-top: 0; }
+.posters .grouphead b { font: 700 18px/1.2 var(--display); letter-spacing: .02em; color: var(--accent); }
+tr.grouphead td { background: var(--panel-2); padding: 8px 14px; font-size: 13px; cursor: default; }
+tr.grouphead td b { color: var(--accent); }

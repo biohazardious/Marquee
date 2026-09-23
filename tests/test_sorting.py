@@ -96,3 +96,39 @@ class TestTransfer:
         payload = views.changes_payload(compared, kind="new", sort="size", descending=True)
         sizes = [row["bytes"] for row in payload["rows"]]
         assert sizes == sorted(sizes, reverse=True)
+
+
+class TestGroupingTheLibrary:
+    """Group by genre, category, year or maker: groups A to Z, the Sort inside each,
+    and each heading's figures the whole group's, not the page's slice."""
+
+    def test_groups_in_order_and_the_sort_inside(self, planned):
+        page = views.machine_rows(planned, sort="description", descending=True,
+                                  group="genre", limit=500)
+        genres = [row["group"] for row in page["rows"]]
+        assert genres == sorted(genres, key=str.lower)
+        for genre in set(genres):
+            inside = [row["description"].lower() for row in page["rows"] if row["group"] == genre]
+            assert inside == sorted(inside, reverse=True)
+
+    def test_a_heading_counts_the_whole_group(self, planned):
+        from collections import Counter
+        everything = views.machine_rows(planned, group="genre", limit=500)["rows"]
+        biggest, size = Counter(row["group"] for row in everything).most_common(1)[0]
+        assert size >= 2, "the fixture has a genre with several games"
+        start = next(index for index, row in enumerate(everything) if row["group"] == biggest)
+        page = views.machine_rows(planned, group="genre", limit=1, offset=start)
+        assert page["groups"][biggest]["count"] == size
+        assert page["groups"][biggest]["continued"] is False
+        later = views.machine_rows(planned, group="genre", limit=1, offset=start + 1)
+        assert later["groups"][biggest]["continued"] is True
+
+    def test_no_or_an_unknown_group_changes_nothing(self, planned):
+        plain = views.machine_rows(planned, sort="size", limit=500)
+        assert "groups" not in plain and "group" not in plain["rows"][0]
+        odd = views.machine_rows(planned, sort="size", limit=500, group="nonsense")
+        assert [row["name"] for row in odd["rows"]] == [row["name"] for row in plain["rows"]]
+
+    def test_a_game_without_a_year_has_a_group_too(self, planned):
+        page = views.machine_rows(planned, group="year", limit=500)
+        assert "Unknown year" in {row["group"] for row in page["rows"]}

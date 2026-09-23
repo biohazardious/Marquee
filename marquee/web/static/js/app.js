@@ -753,6 +753,7 @@ async function boot() {
   bar.getArt.id = 'libGetArt';
   $('libViews').replaceWith(bar.views);
   bar.views.id = 'libViews';
+  $('libGroup').replaceWith(bar.group);
   $('libSort').replaceWith(bar.sort);
 
   $('planBtn').onclick = buildPlan;
