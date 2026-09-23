@@ -170,19 +170,32 @@ GROUPS = {"genre": (lambda item: item.genre, "Unlisted"),
           "manufacturer": (lambda item: item.manufacturer, "Unknown manufacturer")}
 
 
+def unknown(value):
+    """MAME's ways of saying nobody knows: nothing, "<unknown>", or a year of question
+    marks. They go last whichever way a list runs; "????" sorted above 2023."""
+    text = (value or "").strip()
+    return not text or text.lower() == "<unknown>" or set(text) == {"?"}
+
+
 def group_of(item, group):
     label, missing = GROUPS[group]
-    return (label(item) or "").strip() or missing
+    value = (label(item) or "").strip()
+    return missing if unknown(value) else value
 
 
 def machine_rows(plan, query="", status="", genre="", category="", offset=0, limit=200,
                  sort="size", descending=True, with_excluded=False, mature="", have="",
-                 condition="", reason="", state="", sizes=None, console="", group=""):
+                 condition="", reason="", state="", sizes=None, console="", group="",
+                 outline=False, within=None):
     """A filtered, sorted page of the plan's machines.
 
     `with_excluded` lists the machines the exclude list leaves out as well, marked.
     `sizes` is what the release torrent says a machine weighs, which is the only figure
     there is for one that has not been downloaded yet.
+
+    Grouped, the Library asks twice: `outline` for every group's heading and figures
+    and no rows, then `within` a group for that group's rows, a page at a time -- so a
+    group can be opened and closed, and a closed one costs nothing.
     """
     statuses = machine_status(plan)
     sizes = sizes or {}
@@ -198,19 +211,31 @@ def machine_rows(plan, query="", status="", genre="", category="", offset=0, lim
     keys = {"size": weigh,
             "name": lambda item: item.name,
             "description": lambda item: item.description.lower(),
-            "genre": lambda item: ((item.genre or "").lower(), item.description.lower()),
-            "category": lambda item: item.category,
+            "genre": lambda item: (item.genre or "").lower(),
+            "category": lambda item: (item.category or "").lower(),
             "year": lambda item: item.year or "",
             "manufacturer": lambda item: (item.manufacturer or "").lower()}
     # The tie-break first and always A to Z, then the chosen key in its direction:
     # a single reversed sort put equal sizes Z to A too.
     kept.sort(key=lambda item: (item.description.lower(), item.name))
     kept.sort(key=keys.get(sort, keys["size"]), reverse=descending)
+    if sort in GROUPS:
+        kept.sort(key=lambda item: unknown(GROUPS[sort][0](item)))
     grouping = group if group in GROUPS else ""
     if grouping:
         # Groups A to Z (years oldest first), each in the order just chosen: the sort
-        # is stable, so what was sorted above survives inside every group.
-        kept.sort(key=lambda item: group_of(item, grouping).lower())
+        # is stable, so what was sorted above survives inside every group. "Unknown
+        # year" and the like close the list rather than open it.
+        # Sorting by what is grouped on turns the groups round too: Year, newest
+        # first, means the newest year's heading first.
+        missing = GROUPS[grouping][1]
+        kept.sort(key=lambda item: group_of(item, grouping).lower(),
+                  reverse=descending and sort == grouping)
+        kept.sort(key=lambda item: group_of(item, grouping) == missing)
+        if outline:
+            return _outline(kept, grouping, sizes, held_sizes(plan))
+        if within is not None:
+            kept = [item for item in kept if group_of(item, grouping) == within]
 
     # Clamped, not trusted: a negative offset is a Python slice from the end, so
     # `?offset=-5` quietly answered with the last five rows and called them page one.
@@ -233,6 +258,22 @@ def machine_rows(plan, query="", status="", genre="", category="", offset=0, lim
         for row, item in zip(rows, page):
             row["group"] = group_of(item, grouping)
     return payload
+
+
+def _outline(kept, grouping, sizes, held):
+    """Every group the filters leave, in order, with the whole group's figures."""
+    members = {}
+    for item in kept:
+        members.setdefault(group_of(item, grouping), []).append(item)
+    groups = []
+    for label, items in members.items():
+        weight = weigh_together(items, sizes, held)
+        groups.append({"name": label, "count": len(items), "bytes": weight,
+                       "bytes_human": human_bytes(weight)})
+    absent = sum(1 for item in kept
+                 if not (item.rom_source or item.chd_sources or item.in_library))
+    return {"total": len(kept), "offset": 0, "bytes": weigh_together(kept, sizes, held),
+            "group": grouping, "outline": groups, "absent": absent, "rows": []}
 
 
 def _group_totals(kept, page, offset, grouping, sizes, held):
@@ -541,6 +582,8 @@ def sort_rows(rows, sort="size", descending=True):
     # the chosen direction. One reversed sort turned equal sizes Z to A as well.
     rows.sort(key=lambda row: (title(row), row.get("name") or ""))
     rows.sort(key=keys.get(sort, keys["size"]), reverse=descending)
+    if sort in ("genre", "year"):
+        rows.sort(key=lambda row: unknown(row.get(sort)))
     return rows
 
 

@@ -219,6 +219,7 @@ BROWSER = {
     "isNaN", "encodeURIComponent", "decodeURIComponent", "alert", "confirm",
     "performance", "requestAnimationFrame", "Event", "CustomEvent", "AbortController",
     "getComputedStyle", "structuredClone", "queueMicrotask", "Intl", "Symbol",
+    "IntersectionObserver",
     "if", "for", "while", "switch", "catch", "return", "typeof", "function", "await",
     "new", "else", "do", "try", "finally", "throw", "case", "of", "in", "delete",
     "async", "yield", "void", "instanceof",

@@ -10,9 +10,11 @@ const V = {
   art: stored('marquee.art', 'Named_Titles'),
   query: '', genre: '', status: '', category: '', mature: '', have: '', condition: '',
   state: '', console: '',
-  // Section headings through the list: the genre, category, year or maker each game
-  // is under. Remembered, like the order.
-  group: stored('marquee.libgroup', ''), groups: {},
+  // Grouped by genre, category, year or maker, the list is headings that open and
+  // close. `outline` is every heading, `open` the ones open (remembered per grouping),
+  // `chunks` the games fetched so far for each open one.
+  group: stored('marquee.libgroup', ''), outline: [], open: new Set(), chunks: new Map(),
+  absent: 0,
   sort: 'description', dir: 'asc',
   offset: 0, limit: 60, total: 0, bytes: 0, rows: [], loading: false,
 };
@@ -40,16 +42,22 @@ export async function load() {
   V.limit = PAGE[V.view];
   host.classList.add('loading');
   try {
-    const found = await fetchMachines({
-      q: V.query, genre: V.genre, status: V.status, mature: V.mature, have: V.have,
-      condition: V.condition, state: V.state, console: V.console,
-      sort: V.sort, dir: V.dir, offset: V.offset, limit: V.limit, group: V.group,
-    });
+    // Grouped, only the headings: a group's games are asked for once it is open.
+    const found = await fetchMachines(V.group
+      ? { ...filterParams(), group: V.group, outline: '1' }
+      : { ...filterParams(), offset: V.offset, limit: V.limit });
     if (mine !== generation) return;
-    V.groups = found.groups || {};
     V.rows = found.rows;
     V.total = found.total;
     V.bytes = found.bytes || 0;
+    V.outline = found.outline || [];
+    V.absent = found.absent || 0;
+    V.chunks = new Map();
+    if (V.group) {
+      V.open = readOpen();
+      // One heading and nothing under it is a click for nothing.
+      if (V.outline.length === 1) V.open.add(V.outline[0].name);
+    }
   } catch (error) {
     if (mine !== generation) return;
     clear(host);
@@ -62,6 +70,11 @@ export async function load() {
     }
   }
   render();
+}
+
+function filterParams() {
+  return { q: V.query, genre: V.genre, status: V.status, mature: V.mature, have: V.have,
+    condition: V.condition, state: V.state, console: V.console, sort: V.sort, dir: V.dir };
 }
 
 export function clearFilters() {
@@ -104,7 +117,7 @@ const COLUMNS = [
   { key: 'size', label: 'Size', sortable: true, cls: 'num' },
 ];
 
-function table() {
+function table(bodies) {
   const head = el('tr', {}, COLUMNS.map((column) => {
     const cell = el('th', {
       class: `${column.cls || ''} ${column.sortable ? 'sortable' : ''}`,
@@ -117,7 +130,11 @@ function table() {
     return column.sortable ? pressable(cell, () => sortBy(column.key)) : cell;
   }));
 
-  const body = withHeadings((m) => pressable(el('tr', { class: m.here ? '' : 'absent', onclick: () => open(m.name) },
+  return el('table', { class: 'grid' }, el('thead', {}, head), bodies);
+}
+
+function tableRow(m) {
+  return pressable(el('tr', { class: m.here ? '' : 'absent', onclick: () => open(m.name) },
     el('td', { class: 'title-cell' },
       el('b', { text: m.description }),
       el('small', { text: m.name })),
@@ -126,13 +143,7 @@ function table() {
     el('td', { class: 'muted', text: m.category }),
     el('td', { class: 'num dim', text: m.players || '-' }),
     el('td', { class: 'rowflex' }, badges(m)),
-    el('td', { class: 'num nowrap', text: m.bytes ? m.bytes_human : '—' })), () => open(m.name)),
-  (label) => el('tr', { class: 'grouphead' },
-    el('td', { colspan: String(COLUMNS.length) }, headingText(label))));
-
-  return el('table', { class: 'grid' },
-    el('thead', {}, head),
-    el('tbody', {}, body));
+    el('td', { class: 'num nowrap', text: m.bytes ? m.bytes_human : '—' })), () => open(m.name));
 }
 
 function sortBy(key) {
@@ -177,7 +188,7 @@ export function render() {
   if (!host) return;
   clear(host);
 
-  if (!V.rows.length) {
+  if (V.group ? !V.total : !V.rows.length) {
     const plan = state.data.plan || {};
     // Three different reasons for an empty page, and each needs its own sentence:
     // nothing has been checked, the genre is on the exclude list, or the filters
@@ -223,9 +234,13 @@ export function render() {
   }
 
   host.append(summary());
+  if (V.group) {
+    host.append(grouped());
+    return;
+  }
   host.append(V.view === 'posters'
-    ? el('div', { class: 'posters', style: 'padding:18px' }, withHeadings(poster, posterHeading))
-    : el('div', { style: 'overflow-x:auto' }, table()));
+    ? el('div', { class: 'posters', style: 'padding:18px' }, V.rows.map(poster))
+    : el('div', { style: 'overflow-x:auto' }, table(el('tbody', {}, V.rows.map(tableRow)))));
   host.append(pager());
 }
 
@@ -237,7 +252,8 @@ function filtering() {
 /* What the current filter adds up to. This is the line the download decision is made
    on, so it says what the selection weighs and how much of it is already here. */
 function summary() {
-  const here = V.rows.filter((row) => row.here).length;
+  // Grouped, the page holds only what has been opened; the server counts the rest.
+  const absent = V.group ? V.absent : V.rows.filter((row) => !row.here).length;
   // A game in the library weighs what its files there weigh. One that is not
   // anywhere yet is only priced by the release's own file list, which is read on
   // request: it puts the release in the download client, stopped.
@@ -248,10 +264,11 @@ function summary() {
     el('b', { text: `${count(V.total)} ${V.total === 1 ? 'game' : 'games'}` }),
     el('span', { class: 'muted', text: note }),
     priceable ? readSizesButton(catalogue) : null,
-    V.have !== 'yes' && here < V.rows.length
+    V.have !== 'yes' && absent
       ? el('span', { class: 'badge missing', text: 'includes games not downloaded' })
       : null,
     el('span', { style: 'flex:1' }),
+    V.group ? groupButtons() : null,
     filtering()
       ? el('button', { class: 'btn sm ghost', text: 'Clear filters', onclick: clearFilters })
       : null);
@@ -495,33 +512,161 @@ export function toolbar() {
            views };
 }
 
-/* The page's rows with a heading wherever the group changes. The figures are the
-   whole group's, not this page's slice of it; a group begun on an earlier page says
-   so rather than looking like it starts here. */
-function withHeadings(draw, heading) {
-  if (!V.group) return V.rows.map(draw);
-  const out = [];
-  let current = null;
-  for (const m of V.rows) {
-    if (m.group !== current) {
-      current = m.group;
-      out.push(heading(current));
-    }
-    out.push(draw(m));
+/* Grouped ------------------------------------------------------------------
+   Every group is a heading that opens and closes. Its games are fetched when it is
+   open and scrolled near, a page at a time with "Show more" -- so nothing is split
+   across pages, and a collapsed group costs nothing. */
+const NOUNS = { genre: ['genre', 'genres'], category: ['category', 'categories'],
+  year: ['year', 'years'], manufacturer: ['manufacturer', 'manufacturers'] };
+
+function openKey() { return `marquee.libopen.${V.group}`; }
+
+function readOpen() {
+  try {
+    return new Set(JSON.parse(stored(openKey(), '[]')));
+  } catch {
+    return new Set();
   }
-  return out;
 }
 
-function headingText(label) {
-  const totals = V.groups[label] || {};
-  return [el('b', { text: label }),
-    totals.continued ? el('span', { class: 'dim', text: ' (continued)' }) : null,
-    el('span', { class: 'muted', text: ` · ${plural(totals.count || 0, 'game', 'games')}`
-      + (totals.bytes ? ` · ${totals.bytes_human}` : '') })];
+function saveOpen() { store(openKey(), JSON.stringify([...V.open])); }
+
+function groupButtons() {
+  const [one, many] = NOUNS[V.group] || ['group', 'groups'];
+  const all = (open) => () => {
+    V.open = open ? new Set(V.outline.map((group) => group.name)) : new Set();
+    saveOpen();
+    render();
+  };
+  return [el('span', { class: 'muted', text: plural(V.outline.length, one, many) }),
+    el('button', { class: 'btn sm ghost', text: 'Expand all', onclick: all(true) }),
+    el('button', { class: 'btn sm ghost', text: 'Collapse all', onclick: all(false) })];
 }
 
-function posterHeading(label) {
-  return el('div', { class: 'grouphead' }, headingText(label));
+const sections = new Map();
+let watcher = null;
+
+function grouped() {
+  sections.clear();
+  if (watcher) watcher.disconnect();
+  watcher = null;
+  const nodes = V.outline.map((group) => {
+    const node = groupSection(group);
+    sections.set(group.name, node);
+    return node;
+  });
+  return V.view === 'posters'
+    ? el('div', { class: 'libgroups' }, nodes)
+    : el('div', { style: 'overflow-x:auto' }, table(nodes));
+}
+
+function groupSection(group) {
+  const isOpen = V.open.has(group.name);
+  const chunk = V.chunks.get(group.name);
+  const inTable = V.view === 'table';
+  const parts = [groupHead(group, isOpen, inTable)];
+  if (isOpen) {
+    if (chunk && chunk.rows.length) {
+      if (inTable) parts.push(...chunk.rows.map(tableRow));
+      else parts.push(el('div', { class: 'posters' }, chunk.rows.map(poster)));
+    }
+    parts.push(groupFoot(group.name, chunk, inTable));
+  }
+  const node = el(inTable ? 'tbody' : 'section', { class: 'libgroup', data: { group: group.name } },
+    parts);
+  if (isOpen && !chunk) watch(node);
+  return node;
+}
+
+function groupHead(group, isOpen, inTable) {
+  const toggle = () => toggleGroup(group.name);
+  const text = [el('span', { class: 'twist', 'aria-hidden': 'true', text: isOpen ? '▾' : '▸' }),
+    el('b', { text: group.name }),
+    el('span', { class: 'muted', text: ` · ${plural(group.count, 'game', 'games')}`
+      + (group.bytes ? ` · ${group.bytes_human}` : '') })];
+  const node = inTable
+    ? el('tr', { class: 'grouphead toggle', onclick: toggle },
+      el('td', { colspan: String(COLUMNS.length) }, text))
+    : el('div', { class: 'grouphead toggle', onclick: toggle }, text);
+  node.setAttribute('aria-expanded', String(isOpen));
+  return pressable(node, toggle);
+}
+
+/* Under an open group: loading, what went wrong, or how many are still to come. */
+function groupFoot(label, chunk, inTable) {
+  let inner = null;
+  if (!chunk || chunk.loading) {
+    inner = el('span', { class: 'muted', text: 'Loading…' });
+  } else if (chunk.error) {
+    inner = [el('span', { style: 'color:var(--bad)', text: chunk.error }),
+      el('button', { class: 'btn sm', text: 'Try again', onclick: () => fillGroup(label) })];
+  } else if (chunk.rows.length < chunk.total) {
+    const left = chunk.total - chunk.rows.length;
+    inner = el('button', { class: 'btn sm', onclick: () => fillGroup(label),
+      text: `Show ${count(Math.min(left, V.limit))} more · ${count(left)} left` });
+  }
+  if (!inner) return null;
+  return inTable
+    ? el('tr', { class: 'groupfoot' }, el('td', { colspan: String(COLUMNS.length) }, inner))
+    : el('div', { class: 'groupfoot' }, inner);
+}
+
+function toggleGroup(label) {
+  if (V.open.has(label)) V.open.delete(label);
+  else V.open.add(label);
+  saveOpen();
+  redraw(label);
+}
+
+function redraw(label) {
+  const old = sections.get(label);
+  const group = V.outline.find((item) => item.name === label);
+  if (!old || !group || !old.isConnected) return;
+  const fresh = groupSection(group);
+  old.replaceWith(fresh);
+  sections.set(label, fresh);
+}
+
+/* An open group fetches its games when it comes near the screen, so "Expand all"
+   over a thousand makers asks for the few in view, not for all of them. */
+function watch(node) {
+  if (typeof IntersectionObserver === 'undefined') {
+    setTimeout(() => fillGroup(node.dataset.group));
+    return;
+  }
+  if (!watcher) {
+    watcher = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        watcher.unobserve(entry.target);
+        fillGroup(entry.target.dataset.group);
+      }
+    }, { rootMargin: '600px 0px' });
+  }
+  watcher.observe(node);
+}
+
+/* The next page of one group's games, added under the ones already shown. */
+async function fillGroup(label) {
+  const chunk = V.chunks.get(label) || { rows: [], total: 0, loading: false, error: '' };
+  if (chunk.loading) return;
+  chunk.loading = true;
+  chunk.error = '';
+  V.chunks.set(label, chunk);
+  const mine = generation;
+  redraw(label);
+  try {
+    const found = await fetchMachines({ ...filterParams(), group: V.group, within: label,
+      offset: chunk.rows.length, limit: V.limit });
+    if (mine !== generation) return;
+    chunk.rows.push(...found.rows);
+    chunk.total = found.total;
+  } catch (error) {
+    if (mine !== generation) return;
+    chunk.error = error.message;
+  }
+  chunk.loading = false;
+  redraw(label);
 }
 
 function setView(view) {

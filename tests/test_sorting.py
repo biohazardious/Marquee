@@ -30,6 +30,14 @@ class TestTheLibrary:
         keys = [(row["genre"].lower(), row["description"].lower()) for row in rows]
         assert keys == sorted(keys)
 
+    def test_genre_the_other_way_keeps_titles_a_to_z(self, planned):
+        rows = views.machine_rows(planned, sort="genre", descending=True, limit=500)["rows"]
+        genres = [row["genre"].lower() for row in rows]
+        assert genres == sorted(genres, reverse=True)
+        for genre in set(genres):
+            inside = [row["description"].lower() for row in rows if row["genre"].lower() == genre]
+            assert inside == sorted(inside)
+
     def test_by_name_either_way(self, planned):
         up = titles(views.machine_rows(planned, sort="description", descending=False)["rows"])
         down = titles(views.machine_rows(planned, sort="description", descending=True)["rows"])
@@ -53,6 +61,15 @@ class TestRows:
     def test_equal_sizes_still_read_a_to_z_when_largest_is_first(self):
         rows = [{"description": name, "bytes": 0} for name in ("Charlie", "alpha", "Bravo")]
         assert titles(views.sort_rows(rows, "size", True)) == ["alpha", "Bravo", "Charlie"]
+
+    def test_genre_the_other_way_still_reads_titles_a_to_z(self):
+        assert titles(views.sort_rows(list(self.ROWS), "genre", True)) == ["alpha", "Bravo", "Charlie"]
+
+    def test_a_year_nobody_knows_is_last_either_way(self):
+        rows = [{"description": name, "year": year}
+                for name, year in (("Old", "1980"), ("Lost", "????"), ("New", "2023"), ("Blank", ""))]
+        assert titles(views.sort_rows(rows, "year", True))[:2] == ["New", "Old"]
+        assert titles(views.sort_rows(rows, "year", False))[:2] == ["Old", "New"]
 
     def test_an_unknown_key_is_size(self):
         assert titles(views.sort_rows(list(self.ROWS), "nonsense", True)) == ["alpha", "Charlie", "Bravo"]
@@ -132,3 +149,53 @@ class TestGroupingTheLibrary:
     def test_a_game_without_a_year_has_a_group_too(self, planned):
         page = views.machine_rows(planned, group="year", limit=500)
         assert "Unknown year" in {row["group"] for row in page["rows"]}
+
+    def test_unknown_makers_and_years_close_the_list(self, planned):
+        for item in planned.items:
+            if item.manufacturer:
+                item.manufacturer = "<unknown>"
+                break
+        page = views.machine_rows(planned, group="manufacturer", limit=500)
+        groups = [row["group"] for row in page["rows"]]
+        assert "<unknown>" not in groups and groups[-1] == "Unknown manufacturer"
+        by_year = views.machine_rows(planned, sort="year", descending=True, limit=500)["rows"]
+        assert by_year[-1]["year"] in ("", "????") and by_year[0]["year"] not in ("", "????")
+
+
+class TestOpeningAGroup:
+    """Grouped, the page asks for the headings first and a group's games only once it
+    is opened -- so a closed group costs nothing and paging never splits one."""
+
+    def test_the_outline_is_every_group_once_with_nothing_else(self, planned):
+        whole = views.machine_rows(planned, group="genre", outline=True)
+        names = [group["name"] for group in whole["outline"]]
+        assert names == sorted(names, key=str.lower) and len(names) == len(set(names))
+        assert sum(group["count"] for group in whole["outline"]) == whole["total"]
+        assert whole["rows"] == []
+
+    def test_within_a_group_are_its_games_and_only_them(self, planned):
+        outline = views.machine_rows(planned, group="genre", outline=True)["outline"]
+        biggest = max(outline, key=lambda group: group["count"])
+        assert biggest["count"] >= 2, "the fixture has a genre with several games"
+        page = views.machine_rows(planned, group="genre", within=biggest["name"], limit=1)
+        assert page["total"] == biggest["count"] and len(page["rows"]) == 1
+        assert {row["group"] for row in page["rows"]} == {biggest["name"]}
+        rest = views.machine_rows(planned, group="genre", within=biggest["name"], offset=1,
+                                  limit=500)
+        assert len(rest["rows"]) == biggest["count"] - 1
+
+    def test_the_filters_shape_the_outline(self, planned):
+        outline = views.machine_rows(planned, group="genre", outline=True)["outline"]
+        one = outline[0]["name"]
+        narrowed = views.machine_rows(planned, group="genre", genre=one, outline=True)
+        assert [group["name"] for group in narrowed["outline"]] == [one]
+
+    def test_sorting_on_the_grouped_field_turns_the_groups_round(self, planned):
+        newest = views.machine_rows(planned, group="year", sort="year", descending=True,
+                                    outline=True)["outline"]
+        years = [group["name"] for group in newest]
+        assert years[-1] == "Unknown year"
+        assert years[:-1] == sorted(years[:-1], reverse=True)
+        by_size = views.machine_rows(planned, group="year", sort="size", descending=True,
+                                     outline=True)["outline"]
+        assert [group["name"] for group in by_size][:-1] == sorted(years[:-1])
