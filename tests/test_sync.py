@@ -752,3 +752,36 @@ class TestAMachineWithNoRoms:
         assert not PlannedItem(name="g", description="", folder="x", category="x",
                                signature="7534dc0210792e5b").romless
         assert not PlannedItem(name="g", description="", folder="x", category="x").romless
+
+
+class TestALibraryThatCannotBeReached:
+    """The console was off when the NAS restarted. The share could not be listed, the
+    diff took that as an empty library, and all 10,022 games showed as missing --
+    458 GB offered for download and the whole library offered for copying again."""
+
+    def unreachable(self, monkeypatch):
+        from marquee.backends import BackendError
+
+        class Gone:
+            def index(self):
+                raise BackendError("Lost the share while listing roms/mame: timed out")
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(pipeline.backends, "for_destination",
+                            lambda *args, **kwargs: Gone())
+
+    def test_it_fails_rather_than_calling_the_library_empty(
+            self, plan, config, monkeypatch):
+        from marquee.errors import MarqueeError
+        self.unreachable(monkeypatch)
+        with pytest.raises(MarqueeError, match="could not be read"):
+            pipeline.compare_destination(plan, config)
+
+    def test_a_library_not_made_yet_is_still_empty(self, plan, config, romset):
+        import shutil
+        shutil.rmtree(romset["out_dir"], ignore_errors=True)
+        report = pipeline.compare_destination(plan, config)
+        assert report.counts[sync.KEEP] == 0
+        assert report.counts[sync.NEW] > 0

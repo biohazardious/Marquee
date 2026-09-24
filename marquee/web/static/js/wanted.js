@@ -49,6 +49,21 @@ export function render() {
   if (!data) { host.append(el('div', { class: 'muted', text: 'Loading…' })); return; }
   if (data.error) { host.append(el('div', { class: 'banner bad', text: data.error })); return; }
 
+  if (data.planned === false) {
+    // Not "nothing missing": a plan that failed because the library could not be
+    // reached knows nothing about what it holds.
+    if (data.reason) host.append(el('div', { class: 'banner bad', text: data.reason }));
+    host.append(el('div', { class: 'empty' },
+      el('div', { class: 'big' }, icon('wanted')),
+      el('div', {
+        text: data.busy
+          ? 'Working out what the library holds…'
+          : 'Build a plan first. Marquee then compares the selection with what the '
+            + 'library already holds, and whatever is missing is listed here.',
+      })));
+    return;
+  }
+
   if (!data.total) {
     host.append(el('div', { class: 'empty' },
       el('div', { class: 'big' }, icon('check')),

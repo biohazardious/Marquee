@@ -380,7 +380,10 @@ class DownloadsMixin:
     def missing_payload(self, sort="name", descending=False):
         plan = self.job.plan
         if plan is None:
-            return {"total": 0, "bytes": 0, "genres": [], "rows": []}
+            # No plan is not "nothing missing": it may be that the library could not be
+            # reached, and the page must not say every game is on disk.
+            return {"planned": False, "busy": self.job.busy, "reason": self.job.error,
+                    "total": 0, "bytes": 0, "genres": [], "rows": []}
         # The catalogue, if it has been read, is the better answer: it prices every
         # machine in the release rather than only the ones a torrent in the client
         # happens to cover.

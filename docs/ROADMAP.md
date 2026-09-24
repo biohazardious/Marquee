@@ -3,8 +3,10 @@
 Written as a working note, not a wish list: each entry says what it was worth, what it
 cost, and what it depended on. Ordered by value per unit of work at the time.
 
-Every entry here is closed. It is kept as the record of *why* each one was built the
-way it was -- and, for the one that was rejected, why it was not.
+Entries 1-11 are closed. They are kept as the record of *why* each one was built the
+way it was -- and, for the one that was rejected, why it was not. The open entries
+(12 onwards) came from outside suggestions on 2026-09-24; each was checked against the
+code and, where it could be, the real set before it went in.
 
 Measured against the live set (MAME 0.289, 11,990 machines, 332 GB).
 
@@ -172,6 +174,87 @@ never crosses a folder, so `*.zip` is exactly the top-level zips. A path the sel
 itself wants stays Marquee's whatever the list says. The Transfer page applies it to the
 plan in hand; nothing has to be listed again.
 
+## 12. Space nobody wants any more — **open**
+
+Reclaim frees a Marquee torrent once every file it holds is in the library. It has no
+answer for a file that was fetched and then *stopped being wanted* -- a genre
+unticked, a game excluded, one game one ROM turned on. Such a file is on disk, is not
+in the library, and never will be, so Reclaim reports the torrent as blocked with
+"not in the library yet. Transfer them first", which a Transfer can never satisfy.
+The torrent stays blocked for ever and its space is invisible.
+
+What to build: a third verdict beside "in the library" and "still arriving" --
+*nobody wants it* -- with the files and bytes listed, so the page shows the space the
+selection has left behind. Removing it is still the whole torrent (single files share
+pieces with their neighbours; see `web/reclaim.py`), still priced first, and still a
+second request naming the torrents; the warning changes from "the library keeps its
+copies" to "these files exist nowhere else". Show each torrent's ratio and seeding
+time on the same row -- the client already reports them -- so the decision to stop
+seeding is made with the numbers in view.
+
+To measure first: whether a torrent from an older release, left behind by an upgrade,
+lands here or somewhere else.
+
+**Cost:** small to medium. One more set in `reclaim_payload`, one more state on the page.
+
+## 13. A preferred region for one game one ROM — **open**
+
+One game one ROM keeps each family's parent (and, when the parent does not survive the
+filters, the first clone by name). The parent is whichever set MAME's developers made
+the parent, and that is often not the one an English-speaking player wants. On 0.289,
+of 5,097 playable families 667 have a Japanese parent, and in **120 families the
+parent is neither World nor US while a US clone exists**.
+
+What to build: an ordered region list (e.g. World, US, Europe, Japan) consulted only
+when one game one ROM is on. Within a family, the first surviving member whose
+description names the best-ranked region wins; with no match, today's rule stands.
+The region comes from the parenthesised part of `<description>` ("(US, set 1)",
+"(World, rev A)"). Bootlegs, hacks and prototypes never win over a proper set on
+region alone.
+
+The things to get right: the chosen clone must pass every filter the parent would have
+(working status, genre, blacklists); non-merged zips make any member self-contained,
+but a clone's disk lives in the parent's folder (see the CHD layout note), so a family
+with CHDs needs its disk found by name; and the gamelist, the Wanted price and the
+upgrade preview must all describe the member actually kept. Off by default, like one
+game one ROM itself.
+
+**Cost:** medium. Most of it is tests against real families.
+
+## 14. How long until it is on the console — **open, small**
+
+The Activity page already shows each torrent's speed and ETA from the client. What
+nothing says is how long a fetch *will* take before it is started: "what it would
+cost" gives bytes only. Add a time to that confirmation, from the rate Marquee
+observed on its last download, and say which rate it used. Before anything has
+downloaded there is no honest rate, and the line is left out rather than guessed.
+
+**Cost:** small. Record the last observed rate; one sentence on the confirmation.
+
+## 15. A second download client — **open, only when someone asks for it**
+
+`marquee/download/__init__.py` has a `DownloadClient` base, but `QBittorrent` does not
+inherit from it and the pipeline now depends on far more than it lists: `include()`,
+`narrow()`, `delete()`, `piece_hashes()`, categories, `recent_errors()`. Before any
+second client, the base class has to say what is actually called, and a fake client
+in the tests has to satisfy it -- that is worth doing on its own, because today
+nothing stops the interface drifting further.
+
+Transmission's RPC and Deluge's both select files and set priorities, so either could
+be written against that interface. The rule a new client must keep is the one
+qBittorrent's does: it only ever *raises* file priorities on a torrent it did not
+fetch, so nothing somebody else is seeding is ever deselected.
+
+**Cost:** small for the interface, medium per client. Unraid users are the likely
+askers; until one does, only the interface is worth the time.
+
+## Already there
+
+- **A health endpoint.** `/api/health` answers without a key (`web/server.py`), and
+  both the Dockerfile's `HEALTHCHECK` and the TrueNAS catalog template use it. A hung
+  mount under a probe shows as a timeout, which is the unhealthy signal it should be.
+  Probing the library itself there would put SMB traffic on a 30-second timer.
+
 ## 8. A database — only when something needs it
 
 The design note argues for SQLite. Nothing yet does: the plan is rebuilt from the XML
@@ -186,6 +269,12 @@ without a problem to solve. Revisit when the queue and history outlive a process
   Indexed so they are visible; out of scope for the arcade library.
 - **BIOS and device sets.** Pleasuredome's non-merged zips already embed them, which
   is what makes per-game copying work at all.
+- **Stopping files at a seeding quota.** Ratio and seeding time belong to a torrent,
+  not to a file, and a Marquee torrent is a whole release with only some of its files
+  selected, so a file cannot "meet its quota". qBittorrent already enforces share
+  limits per torrent and per category, and can pause or remove at the limit. The part
+  worth having -- ratio and seeding time beside the button that stops seeding -- is in
+  (12).
 - **Rebuilding or repairing ROM sets.** Marquee reads a zip to answer "is this still
   the release we think it is" (6), and the download client hash-checks what it fetches.
   Merging, splitting and fixing a bad set is a rebuilder's job and it does it better

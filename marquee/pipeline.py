@@ -523,14 +523,16 @@ def compare_destination(built, config, reporter=None):
         # open anyway; the pages read it from memory after this.
         manifest.load(config.copy_path, backend)
         space = _disk_space(backend) if backends.is_remote(config.copy_path) else None
-    except Exception as error:  # noqa: BLE001 - a destination that cannot be read is
-        # not fatal; the run simply cannot tell moves from new files.
-        reporter.warn(f"Could not read the destination ({error}); "
-                      f"treating everything as new.")
-        existing = {}
-        leftovers = []
-        empty = []
-        space = None
+    except Exception as error:  # noqa: BLE001 - whatever the protocol raised
+        # Unreachable is not empty. Taken as empty, a console that was switched off
+        # turned every game in the library into one to download and copy again. A
+        # library that does not exist yet never lands here: every backend's index
+        # answers {} for a folder that is not there.
+        raise MarqueeError(
+            f"The library at {backends.redact(config.copy_path)} could not be read "
+            f"({error}). Nothing was planned: without knowing what it holds, every "
+            f"game would look missing. Build the plan again once it can be reached."
+        ) from error
     finally:
         if backend is not None:
             backend.close()

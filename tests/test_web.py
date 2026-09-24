@@ -2791,3 +2791,28 @@ class TestACrossSitePostWithNoBody:
                                          headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=10) as response:
             assert response.status == 200
+
+
+class TestALibraryThatCannotBeReached:
+    """The console was off when the NAS restarted: the plan took the unreadable share
+    for an empty library and Wanted offered all 10,022 games again. Now the plan fails,
+    and Wanted must not turn "no plan" into "nothing missing" either."""
+
+    def test_the_plan_fails_and_wanted_says_why(self, server, monkeypatch, xml_path,
+                                                catlist_path):
+        from marquee import pipeline
+        from marquee.backends import BackendError
+
+        def gone(*_args, **_kwargs):
+            raise BackendError("Failed to connect to 192.168.1.20: No route to host")
+
+        monkeypatch.setattr(pipeline.backends, "for_destination", gone)
+        base, app = server
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "error")
+        assert app.job.plan is None
+        missing = get(base, "/api/missing")
+        assert missing["planned"] is False
+        assert "could not be read" in missing["reason"]
+        with pytest.raises(urllib.error.HTTPError):
+            post(base, "/api/missing/fetch", {})
