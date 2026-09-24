@@ -9,6 +9,7 @@ import json
 import os
 import secrets
 import signal
+import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -481,6 +482,25 @@ def shutdown(app, grace=STOP_GRACE):
     return not app.job.busy
 
 
+def _watch_library(app, every=None):
+    """Knock on a library that could not be reached, and plan once it answers.
+
+    A thread of its own rather than something a page's poll triggers: the console is
+    off most of the time and nobody has the page open when it comes back on.
+    """
+    every = every or app.REACHABLE_EVERY
+
+    def loop():
+        while True:
+            time.sleep(every)
+            try:
+                app.replan_when_reachable()
+            except Exception:  # noqa: BLE001 - a watcher that dies watches nothing
+                pass
+
+    threading.Thread(target=loop, name="library-watch", daemon=True).start()
+
+
 def _terminate(_signum, _frame):
     raise KeyboardInterrupt
 
@@ -494,6 +514,7 @@ def serve(settings_path, host="127.0.0.1", port=8777, open_browser=False):
     # leaves the library, the selection tree and the wanted list empty until somebody
     # notices and presses Build plan.
     started = app.autoplan()
+    _watch_library(app)
     handler = type("BoundHandler", (Handler,), {"app": app})
     httpd = ThreadingHTTPServer((host, port), handler)
 

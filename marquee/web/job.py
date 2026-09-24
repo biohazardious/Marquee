@@ -68,6 +68,9 @@ class Job:
         self.summary = None
         self.checked = None
         self.error = None
+        # The exception behind `error`, so a caller can tell one kind of failure from
+        # another without reading the words (see Application.replan_when_reachable).
+        self.failure = None
         self._cancel.clear()
 
     # -- reporting sink ---------------------------------------------------- #
@@ -95,18 +98,19 @@ class Job:
     def _run(self, work, running_state, finished_state):
         with self._lock:
             self.state = running_state
-            self.error = None
+            self.error = self.failure = None
         try:
             work()
             with self._lock:
                 self.state = finished_state
         except MarqueeError as error:
             with self._lock:
-                self.state, self.error = "error", str(error)
+                self.state, self.error, self.failure = "error", str(error), error
             self.add_event("warn", str(error))
         except Exception as error:  # noqa: BLE001 - surfaced to the page, not swallowed
             with self._lock:
                 self.state, self.error = "error", f"{type(error).__name__}: {error}"
+                self.failure = error
             self.add_event("warn", traceback.format_exc(limit=3))
 
     def _start(self, work, running_state, finished_state, prepare=None):
@@ -125,7 +129,7 @@ class Job:
             if prepare is not None:
                 prepare()
             self.state = running_state
-            self.error = None
+            self.error = self.failure = None
             self._cancel.clear()
             self._thread = threading.Thread(
                 target=self._run, args=(work, running_state, finished_state),

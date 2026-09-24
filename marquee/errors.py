@@ -18,5 +18,12 @@ class SourceNotFoundError(MarqueeError):
     """A required MAME data file could not be located or fetched."""
 
 
+class LibraryUnreachable(MarqueeError):
+    """The library could not be read at all -- a console switched off, a share down.
+
+    Not the same as an empty library, and never to be planned as one.
+    """
+
+
 class VersionMismatchError(MarqueeError):
     """The MAME XML and the catlist are for different MAME versions."""

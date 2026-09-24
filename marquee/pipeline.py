@@ -12,7 +12,8 @@ from dataclasses import dataclass, field, replace
 
 from . import (backends, catalog, console, fetch, gamelist, ignore, manifest,
                plan as planning, sources, sync)
-from .errors import MarqueeError, SourceNotFoundError, VersionMismatchError
+from .errors import (LibraryUnreachable, MarqueeError, SourceNotFoundError,
+                     VersionMismatchError)
 from .reporting import Reporter
 
 PACKAGE_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -528,10 +529,10 @@ def compare_destination(built, config, reporter=None):
         # turned every game in the library into one to download and copy again. A
         # library that does not exist yet never lands here: every backend's index
         # answers {} for a folder that is not there.
-        raise MarqueeError(
+        raise LibraryUnreachable(
             f"The library at {backends.redact(config.copy_path)} could not be read "
-            f"({error}). Nothing was planned: without knowing what it holds, every "
-            f"game would look missing. Build the plan again once it can be reached."
+            f"({str(error) or type(error).__name__}). Nothing was planned: without "
+            f"knowing what it holds, every game would look missing."
         ) from error
     finally:
         if backend is not None:

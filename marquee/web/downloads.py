@@ -6,7 +6,7 @@ import time
 
 from .. import acquire, acquisition, atomic, download, indexers, sources
 from . import fetches
-from ..errors import MarqueeError
+from ..errors import LibraryUnreachable, MarqueeError
 from ..plan import human_bytes
 from .views import filtered, library_sizes, missing_rows
 from .releases import _version_key
@@ -383,6 +383,7 @@ class DownloadsMixin:
             # No plan is not "nothing missing": it may be that the library could not be
             # reached, and the page must not say every game is on disk.
             return {"planned": False, "busy": self.job.busy, "reason": self.job.error,
+                    "waiting": isinstance(self.job.failure, LibraryUnreachable),
                     "total": 0, "bytes": 0, "genres": [], "rows": []}
         # The catalogue, if it has been read, is the better answer: it prices every
         # machine in the release rather than only the ones a torrent in the client

@@ -58,8 +58,11 @@ export function render() {
       el('div', {
         text: data.busy
           ? 'Working out what the library holds…'
-          : 'Build a plan first. Marquee then compares the selection with what the '
-            + 'library already holds, and whatever is missing is listed here.',
+          : data.waiting
+            ? 'Marquee checks every minute whether the library answers, and plans by '
+              + 'itself as soon as it does — switch the console on and this page fills in.'
+            : 'Build a plan first. Marquee then compares the selection with what the '
+              + 'library already holds, and whatever is missing is listed here.',
       })));
     return;
   }

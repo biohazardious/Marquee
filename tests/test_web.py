@@ -2816,3 +2816,79 @@ class TestALibraryThatCannotBeReached:
         assert "could not be read" in missing["reason"]
         with pytest.raises(urllib.error.HTTPError):
             post(base, "/api/missing/fetch", {})
+
+
+class TestPlanningAgainOnceTheLibraryAnswers:
+    """The console is off most of the time. A plan that failed because the library
+    could not be reached is tried again, by itself, once the library answers -- probed
+    with a plain connection, so the page does not flip to "planning" every minute."""
+
+    @pytest.fixture
+    def waiting(self, server, monkeypatch):
+        from marquee.errors import LibraryUnreachable
+        from marquee.web import application as module
+        base, app = server
+        app.job.failure = LibraryUnreachable("gone")
+        app.job.state = "error"
+        started = []
+        monkeypatch.setattr(app, "autoplan", lambda: started.append(1) or {"started": True})
+        monkeypatch.setattr(module.backends, "is_remote", lambda _path: True)
+        return app, started, monkeypatch, module
+
+    def test_nothing_happens_while_it_is_still_off(self, waiting):
+        app, started, monkeypatch, module = waiting
+        monkeypatch.setattr(module.backends, "answers", lambda *_a, **_k: False)
+        assert app.replan_when_reachable()["started"] is False
+        assert started == []
+
+    def test_it_plans_once_the_library_answers(self, waiting):
+        app, started, monkeypatch, module = waiting
+        monkeypatch.setattr(module.backends, "answers", lambda *_a, **_k: True)
+        assert app.replan_when_reachable()["started"] is True
+        assert started == [1]
+
+    def test_answering_but_still_failing_is_not_retried_every_minute(self, waiting):
+        # A console half way through booting: the port is open, the plan fails again.
+        app, started, monkeypatch, module = waiting
+        monkeypatch.setattr(module.backends, "answers", lambda *_a, **_k: True)
+        assert app.replan_when_reachable()["started"] is True
+        assert app.replan_when_reachable()["started"] is False
+        assert started == [1]
+        app._library_watch["next_at"] = 0.0          # the back-off has run out
+        assert app.replan_when_reachable()["started"] is True
+        assert app._library_watch["delay"] == 4 * app.REPLAN_BACKOFF
+
+    def test_off_and_on_again_plans_at_once(self, waiting):
+        app, started, monkeypatch, module = waiting
+        answer = {"now": True}
+        monkeypatch.setattr(module.backends, "answers", lambda *_a, **_k: answer["now"])
+        assert app.replan_when_reachable()["started"] is True
+        answer["now"] = False
+        assert app.replan_when_reachable()["started"] is False
+        answer["now"] = True
+        assert app.replan_when_reachable()["started"] is True
+        assert started == [1, 1]
+
+    def test_any_other_failure_is_left_for_the_user(self, waiting):
+        from marquee.errors import MarqueeError
+        app, started, monkeypatch, module = waiting
+        app.job.failure = MarqueeError("the catlist is for another release")
+        monkeypatch.setattr(module.backends, "answers", lambda *_a, **_k: True)
+        assert app.replan_when_reachable()["started"] is False
+        assert started == []
+
+    def test_a_failed_plan_remembers_why(self, server, monkeypatch, xml_path,
+                                         catlist_path):
+        from marquee import pipeline
+        from marquee.backends import BackendError
+        from marquee.errors import LibraryUnreachable
+
+        def gone(*_args, **_kwargs):
+            raise BackendError("No route to host")
+
+        monkeypatch.setattr(pipeline.backends, "for_destination", gone)
+        base, app = server
+        post(base, "/api/plan", {"xml": xml_path, "catlist": catlist_path})
+        wait_for(app.job, "error")
+        assert isinstance(app.job.failure, LibraryUnreachable)
+        assert get(base, "/api/missing")["waiting"] is True

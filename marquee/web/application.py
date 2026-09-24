@@ -9,9 +9,9 @@ import threading
 import time
 from dataclasses import replace
 
-from .. import art, fetch, pipeline, sync
+from .. import art, backends, fetch, pipeline, sync
 from .. import config as configuration
-from ..errors import MarqueeError
+from ..errors import LibraryUnreachable, MarqueeError
 from ..plan import human_bytes
 from .downloads import DownloadsMixin
 from .fetches import FetchesMixin
@@ -74,6 +74,10 @@ class Application(SettingsMixin, DownloadsMixin, FetchesMixin, ReclaimMixin, Rel
         # Whether a newer Marquee has been tagged. Asked of GitHub twice a day at
         # most; nothing is downloaded, and MARQUEE_NO_UPDATE_CHECK turns it off.
         self.update = {"running": False, "latest": None, "error": None, "checked_at": None}
+        # See replan_when_reachable: whether the library answered at the last knock,
+        # and when a plan that failed although it answered may be tried again.
+        self._library_watch = {"answered": False, "next_at": 0.0,
+                               "delay": self.REPLAN_BACKOFF}
         self._read_catalogue()
 
     def autoplan(self):
@@ -98,6 +102,54 @@ class Application(SettingsMixin, DownloadsMixin, FetchesMixin, ReclaimMixin, Rel
         self.job.start_plan(config, pipeline.SourceOptions(
             newest_published=self.newest_published))
         return {"started": True}
+
+    # How often a library that could not be reached is knocked on again. A console is
+    # switched on to be played; a minute is soon enough that the pages are right by
+    # the time anyone looks, and a connect that fails costs next to nothing.
+    REACHABLE_EVERY = 60
+    # A library that answers and still cannot be planned against -- a console half
+    # way through booting, a password changed -- is tried again after this, doubling
+    # up to an hour, rather than every minute with a full plan each time.
+    REPLAN_BACKOFF = 120
+    REPLAN_BACKOFF_MAX = 3600
+
+    def replan_when_reachable(self):
+        """Plan again once a library that could not be reached answers.
+
+        Only after a plan that failed for exactly that reason: any other failure --
+        a bad setting, a catlist for another release -- is the user's to look at, and
+        retrying it every minute would only bury it. The probe is a bare connection,
+        so while the console stays off nothing changes on the page or in the log.
+        """
+        watch = self._library_watch
+        if self.job.busy:
+            return {"started": False, "reason": "a job is already running"}
+        if not isinstance(self.job.failure, LibraryUnreachable):
+            watch.update(answered=False, next_at=0.0, delay=self.REPLAN_BACKOFF)
+            return {"started": False, "reason": "nothing is waiting for the library"}
+        try:
+            config = self.current_config()
+        except MarqueeError:
+            return {"started": False, "reason": "the settings could not be read"}
+        if not backends.is_remote(config.copy_path):
+            return {"started": False, "reason": "the library is not on the network"}
+        if not backends.answers(config.copy_path):
+            watch["answered"] = False
+            return {"started": False, "reason": "the library still does not answer"}
+        # Coming back on is worth a plan at once; answering all along and failing
+        # anyway waits its turn.
+        now = time.monotonic()
+        if watch["answered"] and now < watch["next_at"]:
+            return {"started": False, "reason": "tried recently; waiting before again"}
+        watch["answered"] = True
+        watch["next_at"] = now + watch["delay"]
+        watch["delay"] = min(watch["delay"] * 2, self.REPLAN_BACKOFF_MAX)
+        started = self.autoplan()
+        if started["started"]:
+            # After the start, not before: a new plan clears the log it would be in.
+            self.job.add_event("info", "The library answers again, so it is being "
+                                       "planned against.")
+        return started
 
     # -- artwork ------------------------------------------------------------ #
 

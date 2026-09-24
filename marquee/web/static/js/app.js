@@ -439,6 +439,9 @@ function onState(data) {
   // The diff is worked out when a plan is built and taken again when the library is
   // checked, so the page that shows it has to come back for it when either finishes.
   if (page === 'changes' && lastState !== data.state) changes.load();
+  // With no plan, Wanted says why; that changes when the library answers again and a
+  // plan starts by itself, before any plan has arrived to trigger the reload above.
+  if (page === 'wanted' && !data.plan && lastState !== data.state) wanted.load();
   // What the library holds changes when a transfer, a check or a plan finishes, and
   // the Library page read it once: it went on showing the old picture until reopened.
   if (page === 'library' && ['planning', 'copying', 'checking'].includes(lastState) && !busy) {

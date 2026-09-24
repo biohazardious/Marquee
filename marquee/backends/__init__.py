@@ -6,6 +6,7 @@ there at the same size. Adding a protocol means adding a module here and a line 
 `for_destination`.
 """
 import re
+import socket
 
 from ..errors import ConfigError, MarqueeError
 
@@ -207,6 +208,47 @@ def _split(destination):
         return None
     user, _, password = match.group(2).partition(":")
     return match.group(1), user, password, destination[match.end():]
+
+
+# Where each protocol listens when the URL names no port. SMB answers on 445 and, on
+# older boxes, only on 139.
+_PORTS = {"smb://": (445, 139), "ftp://": (21,), "ftps://": (21,), "sftp://": (22,),
+          "ssh://": (22,)}
+_HOST_PORT = re.compile(r"^([^/:]+)(?::(\d+))?(?:/|$)")
+
+
+def address(destination):
+    """(host, ports to try) of a remote destination, or None for a local folder."""
+    if not is_remote(destination):
+        return None
+    scheme = next(prefix for prefix in SCHEMES if destination.startswith(prefix))
+    parts = _split(destination)
+    rest = parts[3] if parts else destination[len(scheme):]
+    match = _HOST_PORT.match(rest)
+    if not match:
+        return None
+    port = match.group(2)
+    return match.group(1), (int(port),) if port else _PORTS[scheme]
+
+
+def answers(destination, timeout=3):
+    """Whether anything is listening where a remote library lives.
+
+    A plain connection and nothing more: no login, no listing, nothing written to the
+    job's log. It is what decides that a console switched back on is worth planning
+    against, once a minute, while it is off.
+    """
+    found = address(destination)
+    if not found:
+        return False
+    host, ports = found
+    for port in ports:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def redact(destination):
